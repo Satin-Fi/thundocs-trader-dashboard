@@ -25,6 +25,11 @@ def log(m):
     print(f"{dt.datetime.now().isoformat()} | {m}", flush=True)
 
 def creds():
+    # Prefer env vars (Render/deploy), fall back to local keyfile
+    key = os.getenv("THUNDOC_BINANCE_KEY")
+    secret = os.getenv("THUNDOC_BINANCE_SECRET")
+    if key and secret:
+        return {"apiKey": key, "secretKey": secret}
     if os.path.exists(KEYFILE):
         try: return json.load(open(KEYFILE))
         except Exception: return {}
