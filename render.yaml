@@ -1,0 +1,10 @@
+# Render deployment (backend)
+# Create as a "Web Service" from the backend/ directory using the Dockerfile.
+# Set environment variables in the Render dashboard (do NOT commit keys):
+#   THUNDOC_BINANCE_KEY      = your demo.binance.com API key
+#   THUNDOC_BINANCE_SECRET   = your demo.binance.com secret
+#   PORT                     = 8000
+#   SYMBOL                  = BTCUSDT   (optional)
+#   KL_INTERVAL             = 15m       (optional)
+#   LOOP_SECONDS           = 900       (optional)
+# Health check path: /api/state
