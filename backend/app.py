@@ -143,8 +143,17 @@ def make_state():
 class H(BaseHTTPRequestHandler):
     def _send(self, code, body, ctype="application/json"):
         data = body.encode() if isinstance(body,str) else json.dumps(body).encode()
-        self.send_response(code); self.send_header("Content-Type",ctype)
-        self.send_header("Content-Length",str(len(data))); self.end_headers(); self.wfile.write(data)
+        self.send_response(code)
+        self.send_header("Content-Type",ctype)
+        self.send_header("Content-Length",str(len(data)))
+        self.send_header("Access-Control-Allow-Origin","*")
+        self.send_header("Access-Control-Allow-Methods","GET, OPTIONS")
+        self.end_headers(); self.wfile.write(data)
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin","*")
+        self.send_header("Access-Control-Allow-Methods","GET, OPTIONS")
+        self.end_headers()
     def do_GET(self):
         if self.path in ("/api/state",):
             self._send(200, make_state())
@@ -155,7 +164,7 @@ class H(BaseHTTPRequestHandler):
             if os.path.exists(fpath):
                 self._send(200, open(fpath).read(), "text/html")
             else:
-                self._send(200, "<h1>Thundocs API</h1><p>/api/state /api/fills</p>", "text/html")
+                self._send(200, "<h1>Paper Trader API</h1><p>/api/state /api/fills</p>", "text/html")
         else:
             self._send(404, {"error":"not found"})
     def log_message(self, *a): pass

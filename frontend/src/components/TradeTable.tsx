@@ -1,9 +1,7 @@
 import type { Fill } from '../types'
 
 export default function TradeTable({ fills }: { fills: Fill[] }) {
-  if (!fills.length) {
-    return <div className="pill">no trades yet</div>
-  }
+  if (!fills.length) return <div className="empty">no trades yet — the bot will log fills here as signals fire</div>
   return (
     <table>
       <thead>
@@ -14,10 +12,10 @@ export default function TradeTable({ fills }: { fills: Fill[] }) {
       <tbody>
         {fills.map((f, i) => (
           <tr key={i}>
-            <td className="pill">{new Date(f.t).toLocaleString()}</td>
+            <td className="t-time">{new Date(f.t).toLocaleString()}</td>
             <td><span className={`badge ${f.side.toLowerCase()}`}>{f.side}</span></td>
             <td>{f.qty}</td>
-            <td>${f.price.toLocaleString()}</td>
+            <td>${f.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
             <td>${(f.qty * f.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
           </tr>
         ))}
