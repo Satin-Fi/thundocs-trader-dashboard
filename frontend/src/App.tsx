@@ -19,7 +19,6 @@ export default function App() {
       try {
         const [s, f] = await Promise.all([fetchState(), fetchFills()])
         if (!alive) return
-        // flash price direction
         if (priceRef.current && prevPrice.current) {
           const up = s.price > prevPrice.current
           priceRef.current.className = 'px ' + (up ? 'up' : 'down')
@@ -43,6 +42,26 @@ export default function App() {
   const eq = state?.equity_curve ?? []
   const usd = (n: number) => '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   const pnl = (n: number) => (n >= 0 ? '+' : '') + n.toFixed(2)
+  const pf = state?.portfolio
+
+  // gain/loss tile render
+  const GlTile = ({ title, gain, loss, net }: { title: string; gain: number; loss: number; net: number }) => (
+    <div className="gl-tile">
+      <div className="gl-title">{title}</div>
+      <div className="gl-row">
+        <span className="gl-k">gain</span>
+        <span className="gl-v pos">{usd(gain)}</span>
+      </div>
+      <div className="gl-row">
+        <span className="gl-k">loss</span>
+        <span className="gl-v neg">{usd(loss)}</span>
+      </div>
+      <div className="gl-row total">
+        <span className="gl-k">net</span>
+        <span className={`gl-v ${net >= 0 ? 'pos' : 'neg'}`}>{pnl(net)}</span>
+      </div>
+    </div>
+  )
 
   return (
     <div className="shell">
@@ -73,13 +92,30 @@ export default function App() {
       {state ? (
         <>
           <div className="kpis">
-            <Kpi label="Net P&L · bot" value={state.net_pnl} fmt={pnl} tone="auto" spark={eq.map(p => p.equity)} />
+            <Kpi label="Total Funds" value={state.total_funds} fmt={usd} tone="plain" spark={eq.map(p => p.equity)} />
+            <Kpi label="Net P&L · bot" value={state.net_pnl} fmt={pnl} tone="auto" />
             <Kpi label="Realized" value={state.realized} fmt={pnl} tone="auto" />
-            <Kpi label="Open Position" value={state.btc_open} fmt={v => v > 1e-6 ? `${v.toFixed(5)} BTC` : 'flat'} tone="plain" />
             <Kpi label="USDT Cash" value={state.usdt} fmt={usd} tone="plain" />
           </div>
 
-          <div className="panel rise d5">
+          {pf && (
+            <div className="panel rise d5">
+              <div className="head">
+                <h2>Portfolio — gain / loss ledger</h2>
+                <span className="hint">
+                  {!state.creds_loaded && <span className="warn">⚠ demo creds not loaded on backend</span>}
+                  {state.creds_loaded && 'demo account · fake money'}
+                </span>
+              </div>
+              <div className="gl-grid">
+                <GlTile title="Today" gain={pf.today_gain} loss={pf.today_loss} net={pf.today_net} />
+                <GlTile title="Yesterday" gain={pf.yesterday_gain} loss={pf.yesterday_loss} net={pf.yesterday_net} />
+                <GlTile title="This Week" gain={pf.week_gain} loss={pf.week_loss} net={pf.week_net} />
+              </div>
+            </div>
+          )}
+
+          <div className="panel rise d6">
             <div className="head">
               <h2>Equity Curve — bot trading P&L (USDT)</h2>
               <span className="hint">{state.round_trips} round-trips · {state.fills} fills</span>
@@ -87,7 +123,7 @@ export default function App() {
             <EquityChart data={eq} />
           </div>
 
-          <div className="panel rise d6">
+          <div className="panel rise d7">
             <div className="head">
               <h2>Trade History</h2>
               <span className="hint">updates every 15s</span>
