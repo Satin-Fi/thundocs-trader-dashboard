@@ -35,6 +35,15 @@ def creds():
         except Exception: return {}
     return {}
 
+def demo_get(path, params=None):
+    url = f"{BASE}/v3{path}" + (("?"+urllib.parse.urlencode(params)) if params else "")
+    try:
+        with urllib.request.urlopen(url, timeout=10) as r:
+            return json.loads(r.read().decode())
+    except Exception as e:
+        log(f"DEMO_GET FAIL {path}: {e}")
+        return {}
+
 def demo_price():
     """BTCUSDT price from Binance DEMO (preferred). Falls back to CoinGecko
     public API if the demo endpoint is unreachable (e.g. blocked on some hosts)."""
