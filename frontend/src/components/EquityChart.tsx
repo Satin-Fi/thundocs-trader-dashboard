@@ -1,7 +1,8 @@
 interface Point { t: string; equity: number }
-interface Props { data: Point[] }
+interface Marker { t: string; side: 'BUY' | 'SELL'; price: number }
+interface Props { data: Point[]; markers?: Marker[] }
 
-export default function EquityChart({ data }: Props) {
+export default function EquityChart({ data, markers = [] }: Props) {
   if (!data || data.length < 2) {
     return <div className="chart-wrap" style={{ display: 'grid', placeItems: 'center' }}>
       <span className="hint">waiting for trades to draw the equity curve…</span>
@@ -20,9 +21,36 @@ export default function EquityChart({ data }: Props) {
   const stroke = up ? 'var(--accent)' : 'var(--negative)'
   const last = data[n - 1]
   const ticks = 4
+
+  // map a fill timestamp to an x position by index proximity
+  const timeToIdx = (t: string) => {
+    let best = 0, bestDiff = Infinity
+    for (let i = 0; i < n; i++) {
+      const diff = Math.abs(Date.parse(data[i].t) - Date.parse(t))
+      if (diff < bestDiff) { bestDiff = diff; best = i }
+    }
+    return best
+  }
+  const markerEls = markers
+    .filter(m => !isNaN(Date.parse(m.t)))
+    .map((m, i) => {
+      const idx = timeToIdx(m.t)
+      const cx = x(idx)
+      const cy = y(data[idx].equity)
+      const isBuy = m.side === 'BUY'
+      return (
+        <g key={i} className="eq-marker">
+          {isBuy
+            ? <path d={`M${cx},${cy - 11} l5,9 l-10,0 z`} fill="var(--accent-mint)" />
+            : <path d={`M${cx},${cy + 11} l5,-9 l-10,0 z`} fill="var(--negative)" />}
+          <circle cx={cx} cy={cy} r="3" fill={isBuy ? 'var(--accent-mint)' : 'var(--negative)'} />
+        </g>
+      )
+    })
+
   return (
     <div className="chart-wrap">
-      <svg viewBox={`0 0 ${w} ${h}`} role="img" aria-label="Equity curve">
+      <svg viewBox={`0 0 ${w} ${h}`} role="img" aria-label="Equity curve with trade markers">
         <defs>
           <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={up ? 'rgba(0,217,146,0.18)' : 'rgba(251,86,91,0.14)'} />
@@ -41,8 +69,15 @@ export default function EquityChart({ data }: Props) {
         })}
         <polygon className="eq-area" points={areaPts} />
         <polyline className="eq-line" style={{ stroke }} points={linePts} />
+        {markerEls}
         <circle cx={x(n - 1)} cy={y(last.equity)} r="3.5" fill={stroke} style={{ filter: 'drop-shadow(0 0 6px currentColor)' }} />
       </svg>
+      {markers.length > 0 && (
+        <div className="chart-legend">
+          <span className="lg buy">▲ buy</span>
+          <span className="lg sell">▼ sell</span>
+        </div>
+      )}
     </div>
   )
 }

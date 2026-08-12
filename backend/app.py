@@ -35,14 +35,22 @@ def creds():
         except Exception: return {}
     return {}
 
-def demo_get(path, params=None):
-    url = f"{BASE}/v3{path}" + (("?"+urllib.parse.urlencode(params)) if params else "")
+def demo_price():
+    """BTCUSDT price from Binance DEMO (preferred). Falls back to CoinGecko
+    public API if the demo endpoint is unreachable (e.g. blocked on some hosts)."""
+    d = demo_get("/ticker/price", {"symbol": SYMBOL})
+    p = float(d.get("price", 0) or 0)
+    if p > 0:
+        return p
+    # fallback: CoinGecko (no key, reachable from most hosts)
     try:
+        url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
         with urllib.request.urlopen(url, timeout=10) as r:
-            return json.loads(r.read().decode())
+            j = json.loads(r.read().decode())
+            return float(j["bitcoin"]["usd"])
     except Exception as e:
-        log(f"DEMO_GET FAIL {path}: {e}")
-        return {}
+        log(f"FALLBACK PRICE FAIL: {e}")
+        return 0.0
 
 def signed(path, params, method="GET"):
     c = creds()
@@ -88,9 +96,9 @@ def tick():
     if not c.get("apiKey"):
         log("NO CREDENTIALS"); return
     try:
-        price = float(demo_get("/ticker/price", {"symbol":SYMBOL}).get("price",0) or 0)
+        price = demo_price()
         if price == 0:
-            log("PRICE 0 - demo ticker unreachable"); return
+            log("PRICE 0 - all price sources unreachable"); return
         kl = demo_get("/klines", {"symbol":SYMBOL,"interval":KL_INTERVAL,"limit":20})
         val = rsi([float(k[4]) for k in kl])
         acc = signed("/account", {})
@@ -182,7 +190,7 @@ def make_state():
     for f in fills:
         if f["side"]=="BUY": spent+=f["qty"]*f["price"]; btc_bal+=f["qty"]
         else: gained+=f["qty"]*f["price"]; btc_bal-=f["qty"]
-    price = float(demo_get("/ticker/price", {"symbol":SYMBOL}).get("price",0) or 0)
+    price = demo_price()
     acc = signed("/account", {})
     usdt=0.0; live_btc=0.0
     if isinstance(acc, dict):
@@ -229,14 +237,32 @@ class H(BaseHTTPRequestHandler):
             self._send(200, make_state())
         elif self.path in ("/api/fills",):
             self._send(200, list(reversed(load_fills()[-50:])))
+        elif self.path in ("/api/diag",):
+            self._send(200, diag())
         elif self.path in ("/", "/index.html"):
             fpath = os.path.join(HERE, "static", "index.html")
             if os.path.exists(fpath):
                 self._send(200, open(fpath).read(), "text/html")
             else:
-                self._send(200, "<h1>Paper Trader API</h1><p>/api/state /api/fills</p>", "text/html")
+                self._send(200, "<h1>Paper Trader API</h1><p>/api/state /api/fills /api/diag</p>", "text/html")
         else:
             self._send(404, {"error":"not found"})
+
+def diag():
+    out = {"creds_loaded": bool(creds().get("apiKey")), "probes": {}}
+    for name, url in (
+        ("binance_demo_ticker", f"{BASE}/v3/ticker/price?symbol=BTCUSDT"),
+        ("coingecko", "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"),
+        ("example_com", "https://example.com"),
+    ):
+        try:
+            with urllib.request.urlopen(url, timeout=8) as r:
+                body = r.read(200).decode()
+                out["probes"][name] = {"ok": True, "status": r.status, "sample": body[:80]}
+        except Exception as e:
+            out["probes"][name] = {"ok": False, "error": str(e)[:160]}
+    return out
+
     def log_message(self, *a): pass
 
 if __name__ == "__main__":

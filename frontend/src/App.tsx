@@ -120,7 +120,7 @@ export default function App() {
               <h2>Equity Curve — bot trading P&L (USDT)</h2>
               <span className="hint">{state.round_trips} round-trips · {state.fills} fills</span>
             </div>
-            <EquityChart data={eq} />
+            <EquityChart data={eq} markers={fills.map(f => ({ t: f.t, side: f.side, price: f.price }))} />
           </div>
 
           <div className="panel rise d7">
