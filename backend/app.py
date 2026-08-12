@@ -246,31 +246,14 @@ class H(BaseHTTPRequestHandler):
             self._send(200, make_state())
         elif self.path in ("/api/fills",):
             self._send(200, list(reversed(load_fills()[-50:])))
-        elif self.path in ("/api/diag",):
-            self._send(200, diag())
         elif self.path in ("/", "/index.html"):
             fpath = os.path.join(HERE, "static", "index.html")
             if os.path.exists(fpath):
                 self._send(200, open(fpath).read(), "text/html")
             else:
-                self._send(200, "<h1>Paper Trader API</h1><p>/api/state /api/fills /api/diag</p>", "text/html")
+                self._send(200, "<h1>Paper Trader API</h1><p>/api/state /api/fills</p>", "text/html")
         else:
             self._send(404, {"error":"not found"})
-
-def diag():
-    out = {"creds_loaded": bool(creds().get("apiKey")), "probes": {}}
-    for name, url in (
-        ("binance_demo_ticker", f"{BASE}/v3/ticker/price?symbol=BTCUSDT"),
-        ("coingecko", "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"),
-        ("example_com", "https://example.com"),
-    ):
-        try:
-            with urllib.request.urlopen(url, timeout=8) as r:
-                body = r.read(200).decode()
-                out["probes"][name] = {"ok": True, "status": r.status, "sample": body[:80]}
-        except Exception as e:
-            out["probes"][name] = {"ok": False, "error": str(e)[:160]}
-    return out
 
     def log_message(self, *a): pass
 
