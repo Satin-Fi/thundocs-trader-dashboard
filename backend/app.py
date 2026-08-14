@@ -119,11 +119,15 @@ def tick():
             notional = min(MAX_NOTIONAL, usdt*0.95); qty = max(0.0001, round((notional/price)/0.00001)*0.00001)
             if qty*price >= 10:
                 o = signed("/order", {"symbol":SYMBOL,"side":"BUY","type":"MARKET","quantity":round(qty,5)}, "POST")
-                oid = o.get("orderId", o); log(f"BUY qty={round(qty,5)} -> {oid}"); record_fill("BUY", round(qty,5), price, oid)
+                if isinstance(o, dict) and o.get("orderId"):
+                    log(f"BUY qty={round(qty,5)} -> {o['orderId']}"); record_fill("BUY", round(qty,5), price, o["orderId"])
+                else: log(f"BUY FAILED {o}")
             else: log(f"BUY skipped qty too small {qty:.5f}")
         elif val > RSI_HIGH and btc > 1e-4:
             o = signed("/order", {"symbol":SYMBOL,"side":"SELL","type":"MARKET","quantity":round(btc,6)}, "POST")
-            oid = o.get("orderId", o); log(f"SELL qty={btc} -> {oid}"); record_fill("SELL", round(btc,6), price, oid)
+            if isinstance(o, dict) and o.get("orderId"):
+                log(f"SELL qty={btc} -> {o['orderId']}"); record_fill("SELL", round(btc,6), price, o["orderId"])
+            else: log(f"SELL FAILED {o}")
         else: log("HOLD")
     except Exception as e:
         log(f"TICK ERROR {e}")
