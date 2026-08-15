@@ -100,6 +100,14 @@ def load_fills():
             except Exception: continue
     return out
 
+def load_tune():
+    try:
+        if os.path.exists(TUNE_FILE):
+            return json.load(open(TUNE_FILE))
+    except Exception:
+        pass
+    return None
+
 def tick():
     c = creds()
     if not c.get("apiKey"):
@@ -133,9 +141,14 @@ def tick():
         log(f"TICK ERROR {e}")
 
 def trader_loop():
+    global _cycle_count
     log("trader loop started")
     while True:
         tick()
+        _cycle_count += 1
+        if _cycle_count % TUNE_CYCLE_EVERY == 0:
+            try: self_tune()
+            except Exception as e: log(f"TUNE ERROR {e}")
         time.sleep(LOOP_SECONDS)
 
 def _day_key(iso):
@@ -197,6 +210,77 @@ def portfolio_analytics(fills, price):
         "week_net": round(wk_net, 2),
     }
 
+# ---------------------------------------------------------------------------
+# Self-improvement: periodically backtest the strategy over recent market data
+# and auto-tune RSI thresholds within safe bounds. The bot "learns" by picking
+# the parameter set with the best backtested return + win-rate.
+# ---------------------------------------------------------------------------
+TUNE_FILE = os.path.join(HERE, "tune_report.json")
+TUNE_CYCLE_EVERY = 8          # run self_tune() every N ticks (~2h at 15m)
+_cycle_count = 0
+# safe bounds the tuner is allowed to explore
+RSI_LOW_MIN, RSI_LOW_MAX = 20, 40
+RSI_HIGH_MIN, RSI_HIGH_MAX = 60, 80
+CANDIDATE_SETS = [(25,75),(30,70),(35,65),(20,80),(28,72)]
+
+def backtest(low, high, interval=KL_INTERVAL, limit=400):
+    """Simple RSI mean-reversion backtest on public klines. Returns metrics."""
+    kl = demo_get("/klines", {"symbol":SYMBOL,"interval":interval,"limit":limit})
+    if not isinstance(kl, list) or len(kl) < 30:
+        return None
+    closes = [float(k[4]) for k in kl]
+    cash, pos, entry, trades = 1000.0, 0.0, 0.0, 0
+    wins = losses = 0
+    for i in range(14, len(closes)):
+        r = rsi(closes[:i+1])
+        px = closes[i]
+        if pos == 0 and r < low:
+            entry = px; pos = cash / px; cash = 0.0; trades += 1
+        elif pos > 0 and r > high:
+            pnl = pos*px - pos*entry
+            if pnl >= 0: wins += 1
+            else: losses += 1
+            cash = pos*px; pos = 0.0
+    if pos > 0:
+        cash = pos*closes[-1]
+    ret = (cash - 1000.0) / 1000.0
+    wr = (wins/(wins+losses))*100 if (wins+losses) else 0.0
+    return {"ret": round(ret*100,2), "win_rate": round(wr,1), "trades": trades, "wins": wins, "losses": losses}
+
+def self_tune():
+    """Evaluate candidate RSI sets, keep the best, auto-apply if clearly better."""
+    global RSI_LOW, RSI_HIGH
+    results = []
+    for (lo, hi) in CANDIDATE_SETS:
+        m = backtest(lo, hi)
+        if m: results.append((lo, hi, m))
+    if not results:
+        return None
+    # rank by return, tie-break win-rate
+    results.sort(key=lambda x: (x[2]["ret"], x[2]["win_rate"]), reverse=True)
+    best = results[0]
+    cur = next((r for r in results if r[0]==RSI_LOW and r[1]==RSI_HIGH), None)
+    cur_ret = cur[2]["ret"] if cur else 0.0
+    # apply best if it beats current by >1% (avoid thrashing)
+    applied = False
+    if best[2]["ret"] > cur_ret + 1.0:
+        RSI_LOW, RSI_HIGH = best[0], best[1]
+        applied = True
+    report = {
+        "ts": dt.datetime.now().isoformat(),
+        "current": {"low": RSI_LOW, "high": RSI_HIGH, "ret": cur_ret},
+        "best": {"low": best[0], "high": best[1], "metrics": best[2]},
+        "applied": applied,
+        "candidates": [{"low":lo,"high":hi,"metrics":m} for (lo,hi,m) in results],
+    }
+    try:
+        with open(TUNE_FILE, "w") as f:
+            json.dump(report, f, indent=2)
+    except Exception:
+        pass
+    log(f"SELF-TUNE best={best[0]}/{best[1]} ret={best[2]['ret']}% applied={applied}")
+    return report
+
 def make_state():
     fills = load_fills()
     spent=gained=0.0; btc_bal=0.0
@@ -227,6 +311,8 @@ def make_state():
         "total_funds":round(total_funds,2),
         "fills":len(fills),"round_trips":len([f for f in fills if f["side"]=="SELL"]),
         "equity_curve":equity,"portfolio":pa,
+        "rsi": {"low": RSI_LOW, "high": RSI_HIGH},
+        "tune": load_tune(),
         "creds_loaded": bool(creds().get("apiKey")),
         "updated":dt.datetime.now().isoformat(),
     }
@@ -250,6 +336,12 @@ class H(BaseHTTPRequestHandler):
             self._send(200, make_state())
         elif self.path in ("/api/fills",):
             self._send(200, list(reversed(load_fills()[-50:])))
+        elif self.path in ("/api/tune",):
+            try:
+                rep = self_tune()
+            except Exception as e:
+                rep = {"error": str(e)}
+            self._send(200, rep or load_tune() or {"status": "no data"})
         elif self.path in ("/", "/index.html"):
             fpath = os.path.join(HERE, "static", "index.html")
             if os.path.exists(fpath):

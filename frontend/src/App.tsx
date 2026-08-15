@@ -115,6 +115,27 @@ export default function App() {
             </div>
           )}
 
+          {state.tune && (
+            <div className="panel rise d55">
+              <div className="head">
+                <div>
+                  <h2>Strategy Self-Review</h2>
+                  <span className="hint">bot backtests RSI sets every ~2h and auto-tunes · {state.rsi.low}/{state.rsi.high} active</span>
+                </div>
+                <span className={`badge ${state.tune.applied ? 'sell' : 'buy'}`}>{state.tune.applied ? 'tuned' : 'stable'}</span>
+              </div>
+              <div className="tune-grid">
+                {state.tune.candidates.map((c, i) => (
+                  <div key={i} className={`tune-card ${(c.low===state.tune!.best.low && c.high===state.tune!.best.high) ? 'best' : ''}`}>
+                    <div className="tune-set">RSI {c.low}/{c.high}</div>
+                    <div className={`tune-ret ${(c.metrics.ret??0) >= 0 ? 'pos' : 'neg'}`}>{(c.metrics.ret??0) >= 0 ? '+' : ''}{(c.metrics.ret??0).toFixed(2)}%</div>
+                    <div className="tune-wr">win {c.metrics.win_rate??0}% · {c.metrics.trades??0} trades</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="panel rise d6">
             <div className="head">
               <h2>Equity Curve — bot trading P&L (USDT)</h2>

@@ -1,0 +1,77 @@
+{
+  "ts": "2026-08-15T14:25:24.454197",
+  "current": {
+    "low": 20,
+    "high": 80,
+    "ret": -0.61
+  },
+  "best": {
+    "low": 20,
+    "high": 80,
+    "metrics": {
+      "ret": 2.08,
+      "win_rate": 100.0,
+      "trades": 3,
+      "wins": 3,
+      "losses": 0
+    }
+  },
+  "applied": true,
+  "candidates": [
+    {
+      "low": 20,
+      "high": 80,
+      "metrics": {
+        "ret": 2.08,
+        "win_rate": 100.0,
+        "trades": 3,
+        "wins": 3,
+        "losses": 0
+      }
+    },
+    {
+      "low": 25,
+      "high": 75,
+      "metrics": {
+        "ret": 0.29,
+        "win_rate": 75.0,
+        "trades": 4,
+        "wins": 3,
+        "losses": 1
+      }
+    },
+    {
+      "low": 35,
+      "high": 65,
+      "metrics": {
+        "ret": 0.04,
+        "win_rate": 50.0,
+        "trades": 7,
+        "wins": 3,
+        "losses": 3
+      }
+    },
+    {
+      "low": 28,
+      "high": 72,
+      "metrics": {
+        "ret": -0.01,
+        "win_rate": 60.0,
+        "trades": 5,
+        "wins": 3,
+        "losses": 2
+      }
+    },
+    {
+      "low": 30,
+      "high": 70,
+      "metrics": {
+        "ret": -0.61,
+        "win_rate": 40.0,
+        "trades": 6,
+        "wins": 2,
+        "losses": 3
+      }
+    }
+  ]
+}

@@ -143,6 +143,16 @@ tbody tr:last-child td { border-bottom: none; }
 .warn { color: #ffb454; font-weight: 600; }
 @media (max-width: 860px) { .gl-grid { grid-template-columns: 1fr; } }
 
+/* ---------- strategy self-review ---------- */
+.tune-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; }
+.tune-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; transition: border-color 0.2s ease, transform 0.2s ease; }
+.tune-card.best { border-color: var(--accent-mint); box-shadow: 0 0 0 1px rgba(0,217,146,0.25); }
+.tune-set { font-size: 12px; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
+.tune-ret { font-family: var(--mono); font-size: 18px; font-weight: 700; }
+.tune-ret.pos { color: var(--accent-mint); }
+.tune-ret.neg { color: var(--negative); }
+.tune-wr { font-size: 11px; color: var(--faint); margin-top: 2px; }
+
 /* ---------- mount stagger ---------- */
 .rise { opacity: 0; transform: translateY(10px); animation: rise 0.5s ease forwards; }
 @keyframes rise { to { opacity: 1; transform: none; } }

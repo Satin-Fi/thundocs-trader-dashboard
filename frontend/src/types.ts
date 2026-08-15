@@ -23,6 +23,14 @@ export interface State {
     week_loss: number
     week_net: number
   }
+  rsi: { low: number; high: number }
+  tune: {
+    ts: string
+    current: { low: number; high: number; ret: number }
+    best: { low: number; high: number; metrics: { ret: number; win_rate: number; trades: number } }
+    applied: boolean
+    candidates: { low: number; high: number; metrics: { ret: number; win_rate: number; trades: number } }[]
+  } | null
   updated: string
 }
 
