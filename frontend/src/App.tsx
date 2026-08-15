@@ -190,26 +190,33 @@ export default function App() {
           )}
 
           {/* CURRENT POSITION */}
-          {state.position ? (
+          {state.position ? (() => {
+            const pos = state.position!
+            const mark = wsPrice ?? pos.mark_price
+            const upnl = (mark - pos.entry) * pos.qty
+            const upct = (mark / pos.entry - 1) * 100
+            const green = upnl >= 0
+            return (
             <div className="panel rise d4">
               <div className="head">
                 <h2>Current Position</h2>
-                <span className={`badge ${state.position.unrealized_pnl >= 0 ? 'buy' : 'sell'}`}>
-                  {state.position.side} · {state.position.unrealized_pnl >= 0 ? '+' : ''}{state.position.unrealized_pnl.toFixed(2)} ({state.position.unrealized_pct.toFixed(2)}%)
+                <span className={`badge ${green ? 'buy' : 'sell'}`}>
+                  {pos.side} · {green ? '+' : ''}{upnl.toFixed(2)} ({upct.toFixed(2)}%)
                 </span>
               </div>
               <div className="pos-grid">
-                <div className="pos-cell"><span className="pos-k">Entry</span><span className="pos-v">${state.position.entry.toLocaleString()}</span></div>
-                <div className="pos-cell"><span className="pos-k">Qty (BTC)</span><span className="pos-v">{state.position.qty}</span></div>
-                <div className="pos-cell"><span className="pos-k">Mark</span><span className="pos-v">${state.position.mark_price.toLocaleString()}</span></div>
-                <div className="pos-cell"><span className="pos-k">Unrealized P&L</span><span className={`pos-v ${state.position.unrealized_pnl >= 0 ? 'pos' : 'neg'}`}>{state.position.unrealized_pnl >= 0 ? '+' : ''}{state.position.unrealized_pnl.toFixed(2)}</span></div>
-                <div className="pos-cell"><span className="pos-k">Stop Loss</span><span className="pos-v neg">${state.position.stop_loss.toLocaleString()}</span></div>
-                <div className="pos-cell"><span className="pos-k">Take Profit</span><span className="pos-v pos">${state.position.take_profit.toLocaleString()}</span></div>
-                <div className="pos-cell"><span className="pos-k">Risk / Reward</span><span className="pos-v">{state.position.rr.toFixed(2)} : 1</span></div>
-                <div className="pos-cell"><span className="pos-k">Opened</span><span className="pos-v">{state.position.opened_at ? new Date(state.position.opened_at).toLocaleString() : '—'}</span></div>
+                <div className="pos-cell"><span className="pos-k">Entry</span><span className="pos-v">${pos.entry.toLocaleString()}</span></div>
+                <div className="pos-cell"><span className="pos-k">Qty (BTC)</span><span className="pos-v">{pos.qty}</span></div>
+                <div className="pos-cell"><span className="pos-k">Mark</span><span className={`pos-v ${green ? 'pos' : 'neg'}`}>${mark.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}</span></div>
+                <div className="pos-cell"><span className="pos-k">Unrealized P&L</span><span className={`pos-v ${green ? 'pos' : 'neg'}`}>{green ? '+' : ''}{upnl.toFixed(2)}</span></div>
+                <div className="pos-cell"><span className="pos-k">Stop Loss</span><span className="pos-v neg">${pos.stop_loss.toLocaleString()}</span></div>
+                <div className="pos-cell"><span className="pos-k">Take Profit</span><span className="pos-v pos">${pos.take_profit.toLocaleString()}</span></div>
+                <div className="pos-cell"><span className="pos-k">Risk / Reward</span><span className="pos-v">{pos.rr.toFixed(2)} : 1</span></div>
+                <div className="pos-cell"><span className="pos-k">Opened</span><span className="pos-v">{pos.opened_at ? new Date(pos.opened_at).toLocaleString() : '—'}</span></div>
               </div>
             </div>
-          ) : (
+            )
+          })() : (
             <div className="panel rise d4">
               <div className="head"><h2>Current Position</h2><span className="hint">flat · no open trade</span></div>
               <div className="empty">Bot is flat — watching for an entry signal.</div>
