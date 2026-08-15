@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchState, fetchFills, fetchKlines } from './api'
+import { fetchState, fetchFills, fetchPrice, fetchKlines } from './api'
 import type { State, Fill, Klines } from './types'
 import Kpi from './components/Kpi'
 import EquityChart from './components/EquityChart'
@@ -31,23 +31,21 @@ export default function App() {
     return () => { alive = false }
   }, [])
 
-  // FAST poll (2s): price + position + fills — keeps the price ticker and live
-  // line moving in (near) real time without re-fetching heavy candle data.
+  // FAST poll (2s): price only — via lightweight /api/price (no signed account
+  // call) so the ticker + live line move in near-real-time.
   useEffect(() => {
     let alive = true
     const poll = async () => {
       try {
-        const [s, f] = await Promise.all([fetchState(), fetchFills()])
+        const p = await fetchPrice()
         if (!alive) return
         if (priceRef.current && prevPrice.current) {
-          const up = s.price > prevPrice.current
+          const up = p.price > prevPrice.current
           priceRef.current.className = 'px ' + (up ? 'up' : 'down')
         }
-        prevPrice.current = s.price
-        setState(s)
-        setFills(f)
+        prevPrice.current = p.price
+        setState(s => (s ? { ...s, price: p.price } : s))
         setOnline(true)
-        setErr('')
       } catch (e) {
         if (!alive) return
         setOnline(false)
@@ -59,8 +57,29 @@ export default function App() {
     return () => { alive = false; clearInterval(id) }
   }, [])
 
+  // MEDIUM poll (15s): full state (position, portfolio, funds) + fills. Heavier
+  // (signed /account call) so we don't run it every 2s.
+  useEffect(() => {
+    let alive = true
+    const poll = async () => {
+      try {
+        const [s, f] = await Promise.all([fetchState(), fetchFills()])
+        if (!alive) return
+        setState(s)
+        setFills(f)
+        setErr('')
+      } catch (e) {
+        if (!alive) return
+        setErr(e instanceof Error ? e.message : 'offline')
+      }
+    }
+    poll()
+    const id = setInterval(poll, 15000)
+    return () => { alive = false; clearInterval(id) }
+  }, [])
+
   // SLOW poll (20s): refresh the active interval's candles. Candle bodies only
-  // change per candle anyway, so 20s is plenty and avoids hammering the API.
+  // change per candle anyway, so 20s is plenty.
   useEffect(() => {
     let alive = true
     const poll = async () => {

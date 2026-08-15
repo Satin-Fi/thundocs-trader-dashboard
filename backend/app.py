@@ -555,6 +555,14 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/api/state",):
             self._send(200, make_state())
+        elif self.path in ("/api/price",):
+            # lightweight, fast: price + position only (no signed /account call),
+            # so the frontend's 2s poll stays near-real-time.
+            try:
+                price = demo_price()
+                self._send(200, {"price": price, "updated": dt.datetime.now().isoformat()})
+            except Exception as e:
+                self._send(500, {"error": str(e)})
         elif self.path in ("/api/fills",):
             self._send(200, list(reversed(load_fills()[-50:])))
         elif self.path in ("/api/tune",):

@@ -19,5 +19,6 @@ async function get<T>(path: string): Promise<T> {
 
 export const fetchState = () => get<State>('/api/state')
 export const fetchFills = () => get<Fill[]>('/api/fills')
+export const fetchPrice = () => get<{ price: number; updated: string }>('/api/price')
 export const fetchKlines = (interval = '15m') => get<Klines>(`/api/klines?interval=${interval}`)
 export const apiBase = API_URL
