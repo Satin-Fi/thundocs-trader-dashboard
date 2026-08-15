@@ -95,6 +95,20 @@ def demo_price():
         log(f"FALLBACK PRICE FAIL: {e}")
         return 0.0
 
+# ---- cached live price (shared by /api/price, /api/stream, make_state) ----
+_price_cache = {"price": 0.0, "ts": 0.0}
+def live_price():
+    """Return cached price if fresh (<250ms), else refetch. Avoids hammering
+    Binance on every request (SSE streams many times/sec)."""
+    now = time.time()
+    if now - _price_cache["ts"] < 0.25 and _price_cache["price"] > 0:
+        return _price_cache["price"]
+    p = demo_price()
+    if p > 0:
+        _price_cache["price"] = p
+        _price_cache["ts"] = now
+    return _price_cache["price"]
+
 def signed(path, params, method="GET"):
     c = creds()
     if not c.get("apiKey"):
@@ -566,10 +580,53 @@ class H(BaseHTTPRequestHandler):
             # lightweight, fast: price + position only (no signed /account call),
             # so the frontend's 2s poll stays near-real-time.
             try:
-                price = demo_price()
+                price = live_price()
                 self._send(200, {"price": price, "updated": dt.datetime.now().isoformat()})
             except Exception as e:
                 self._send(500, {"error": str(e)})
+        elif self.path in ("/api/stream",):
+            # Server-Sent Events: push live price to the browser ~3x/sec via the
+            # same tunnel the dashboard already uses, so it works even if the
+            # browser cannot reach Binance's WebSocket directly.
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(b": connected\n\n")
+            self.wfile.flush()
+            try:
+                last = 0.0
+                beats = 0
+                while True:
+                    try:
+                        p = live_price()
+                    except Exception:
+                        p = 0.0
+                    now = time.time()
+                    if p > 0 and (now - last >= 0.3):
+                        payload = json.dumps({"price": p, "t": int(now * 1000)}).encode()
+                        try:
+                            self.wfile.write(b"data: " + payload + b"\n\n")
+                            self.wfile.flush()
+                        except Exception:
+                            break  # client disconnected
+                        last = now
+                        beats = 0
+                    else:
+                        beats += 1
+                        if beats >= 6:  # heartbeat every ~2s of no data
+                            try:
+                                self.wfile.write(b": ping\n\n")
+                                self.wfile.flush()
+                            except Exception:
+                                break
+                            beats = 0
+                    time.sleep(0.1)
+            except Exception:
+                pass
+            return
         elif self.path in ("/api/fills",):
             self._send(200, list(reversed(load_fills()[-50:])))
         elif self.path in ("/api/tune",):

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { fetchState, fetchFills, fetchKlines } from './api'
-import { useBinancePrice } from './useBinancePrice'
+import { useLivePrice } from './useBinancePrice'
 import type { State, Fill, Klines } from './types'
 import Kpi from './components/Kpi'
 import EquityChart from './components/EquityChart'
@@ -20,8 +20,8 @@ export default function App() {
   const tfRef = useRef(tfState)
   tfRef.current = tfState
   const cacheRef = useRef<Record<string, Klines>>({})
-  // REAL-TIME price via Binance WebSocket (sub-second); falls back to REST inside the hook
-  const wsPrice = useBinancePrice('btcusdt')
+  // REAL-TIME price: SSE through the tunnel (primary) → Binance WS → REST poll.
+  const { price: wsPrice, mode: priceMode } = useLivePrice('btcusdt')
 
   // prefetch every timeframe once in the background so switching is instant
   useEffect(() => {
@@ -144,6 +144,9 @@ export default function App() {
           {online
             ? <>live · {state ? new Date(state.updated).toLocaleTimeString() : ''}</>
             : <span style={{ color: 'var(--negative)' }}>reconnecting…</span>}
+          <span className={`pmode pmode-${priceMode}`} title="price feed">
+            {priceMode === 'sse' ? 'SSE' : priceMode === 'ws' ? 'WS' : priceMode === 'rest' ? 'poll' : '…'}
+          </span>
         </div>
       </div>
 

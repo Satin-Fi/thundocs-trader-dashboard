@@ -75,6 +75,9 @@ body::before {
 .dot { position: relative; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 0 var(--accent-glow); }
 .dot.on { animation: pulse 2.4s infinite; }
 .dot.off { background: var(--negative); box-shadow: none; }
+.pmode { margin-left: 6px; padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 600; letter-spacing: 0.04em; border: 1px solid var(--border-strong); color: var(--muted); }
+.pmode-sse, .pmode-ws { color: var(--accent); border-color: rgba(0,217,146,0.4); }
+.pmode-rest { color: var(--warn, #ffba00); border-color: rgba(255,186,0,0.4); }
 @keyframes pulse {
   0% { box-shadow: 0 0 0 0 rgba(0,217,146,0.45); }
   70% { box-shadow: 0 0 0 8px rgba(0,217,146,0); }
