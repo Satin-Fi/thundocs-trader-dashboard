@@ -105,19 +105,29 @@ export default function PriceChart({ klines, fills, position, livePrice, interva
         }))
       candle.setMarkers(markers)
 
-      // entry / SL / TP lines (re-created each data change)
+      // entry / SL / TP lines — vivid, distinct colors so they don't blend into candles
       slLinesRef.current.forEach(l => { try { candle.removePriceLine(l) } catch {} })
       slLinesRef.current = []
-      const addLine = (price: number, color: string, title: string, style: 0 | 2 | 3 = 2) =>
-        slLinesRef.current.push(candle.createPriceLine({ price, color, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title }))
-      addLine(position?.entry ?? livePrice, '#00d992', 'ENTRY')
+      const addLine = (price: number, color: string, title: string) =>
+        slLinesRef.current.push(candle.createPriceLine({ price, color, lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title }))
       if (position) {
-        addLine(position.stop_loss, '#fb565b', 'SL')
-        addLine(position.take_profit, '#00d992', 'TP')
+        addLine(position.entry, '#22d3ee', 'ENTRY')        // cyan
+        addLine(position.stop_loss, '#f43f5e', 'SL')       // rose/red
+        addLine(position.take_profit, '#facc15', 'TP')     // gold
+      } else {
+        addLine(livePrice, '#22d3ee', 'ENTRY')
       }
 
-      // ONLY re-fit when the interval actually changes — never on a live-price tick,
-      // so the user can scroll/drag without being yanked back every 15s.
+      // keep the PRICE scale including SL/TP in view (never touch the TIME axis
+      // here, so dragging/scrolling the chart does not snap back)
+      const lows = klines.map(k => k.l), highs = klines.map(k => k.h)
+      const prices = [...lows, ...highs, livePrice]
+      if (position) prices.push(position.entry, position.stop_loss, position.take_profit)
+      const pmin = Math.min(...prices), pmax = Math.max(...prices)
+      const pad = (pmax - pmin) * 0.1 || 1
+      chart.priceScale('right').applyOptions({ autoScale: false, visibleRange: { from: pmin - pad, to: pmax + pad } })
+
+      // ONLY re-fit the TIME axis when the interval changes — never on a live tick
       if (shownInterval.current !== interval) {
         chart.timeScale().fitContent()
         shownInterval.current = interval

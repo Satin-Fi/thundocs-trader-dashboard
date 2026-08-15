@@ -187,7 +187,7 @@ export default function App() {
                   ))}
                 </div>
                 <span className="hint">
-                  <span className="lg-buy">▲ buy</span> <span className="lg-sell">▼ sell</span> · <span style={{color:'var(--accent)'}}>entry</span> <span style={{color:'var(--neg)'}}>SL</span> <span style={{color:'var(--pos)'}}>TP</span> · {klines ? klines.candles.length : 0} candles
+                  <span className="lg-buy">▲ buy</span> <span className="lg-sell">▼ sell</span> · <span style={{color:'#22d3ee'}}>entry</span> <span style={{color:'#f43f5e'}}>SL</span> <span style={{color:'#facc15'}}>TP</span> · {klines ? klines.candles.length : 0} candles
                 </span>
               </div>
             </div>
