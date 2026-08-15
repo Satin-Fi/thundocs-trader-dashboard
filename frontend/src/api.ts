@@ -1,4 +1,4 @@
-import type { State, Fill } from './types'
+import type { State, Fill, Klines } from './types'
 
 // API base is set at runtime via /config.js (window.__API_URL__), which Vercel
 // serves verbatim — no build-time env needed. Falls back to VITE_API_URL if set.
@@ -19,4 +19,5 @@ async function get<T>(path: string): Promise<T> {
 
 export const fetchState = () => get<State>('/api/state')
 export const fetchFills = () => get<Fill[]>('/api/fills')
+export const fetchKlines = () => get<Klines>('/api/klines')
 export const apiBase = API_URL

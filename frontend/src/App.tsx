@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchState, fetchFills } from './api'
-import type { State, Fill } from './types'
+import { fetchState, fetchFills, fetchKlines } from './api'
+import type { State, Fill, Klines } from './types'
 import Kpi from './components/Kpi'
 import EquityChart from './components/EquityChart'
+import PriceChart from './components/PriceChart'
 import TradeTable from './components/TradeTable'
 
 export default function App() {
   const [state, setState] = useState<State | null>(null)
   const [fills, setFills] = useState<Fill[]>([])
+  const [klines, setKlines] = useState<Klines | null>(null)
   const [online, setOnline] = useState(true)
   const [err, setErr] = useState('')
   const priceRef = useRef<HTMLSpanElement>(null)
@@ -17,7 +19,7 @@ export default function App() {
     let alive = true
     const poll = async () => {
       try {
-        const [s, f] = await Promise.all([fetchState(), fetchFills()])
+        const [s, f, k] = await Promise.all([fetchState(), fetchFills(), fetchKlines()])
         if (!alive) return
         if (priceRef.current && prevPrice.current) {
           const up = s.price > prevPrice.current
@@ -26,6 +28,7 @@ export default function App() {
         prevPrice.current = s.price
         setState(s)
         setFills(f)
+        setKlines(k)
         setOnline(true)
         setErr('')
       } catch (e) {
@@ -114,6 +117,45 @@ export default function App() {
               </div>
             </div>
           )}
+
+          {/* CURRENT POSITION */}
+          {state.position ? (
+            <div className="panel rise d4">
+              <div className="head">
+                <h2>Current Position</h2>
+                <span className={`badge ${state.position.unrealized_pnl >= 0 ? 'buy' : 'sell'}`}>
+                  {state.position.side} · {state.position.unrealized_pnl >= 0 ? '+' : ''}{state.position.unrealized_pnl.toFixed(2)} ({state.position.unrealized_pct.toFixed(2)}%)
+                </span>
+              </div>
+              <div className="pos-grid">
+                <div className="pos-cell"><span className="pos-k">Entry</span><span className="pos-v">${state.position.entry.toLocaleString()}</span></div>
+                <div className="pos-cell"><span className="pos-k">Qty (BTC)</span><span className="pos-v">{state.position.qty}</span></div>
+                <div className="pos-cell"><span className="pos-k">Mark</span><span className="pos-v">${state.position.mark_price.toLocaleString()}</span></div>
+                <div className="pos-cell"><span className="pos-k">Unrealized P&L</span><span className={`pos-v ${state.position.unrealized_pnl >= 0 ? 'pos' : 'neg'}`}>{state.position.unrealized_pnl >= 0 ? '+' : ''}{state.position.unrealized_pnl.toFixed(2)}</span></div>
+                <div className="pos-cell"><span className="pos-k">Opened</span><span className="pos-v">{state.position.opened_at ? new Date(state.position.opened_at).toLocaleString() : '—'}</span></div>
+              </div>
+            </div>
+          ) : (
+            <div className="panel rise d4">
+              <div className="head"><h2>Current Position</h2><span className="hint">flat · no open trade</span></div>
+              <div className="empty">Bot is flat — watching for an entry signal.</div>
+            </div>
+          )}
+
+          {/* PRICE CHART — the coin you're trading */}
+          <div className="panel rise d45">
+            <div className="head">
+              <h2>{state.symbol} · Price ({klines?.interval ?? '15m'})</h2>
+              <span className="hint">
+                <span className="lg-buy">▲ buy</span> <span className="lg-sell">▼ sell</span> · dashed = entry · {klines ? klines.candles.length : 0} candles
+              </span>
+            </div>
+            {klines ? (
+              <PriceChart klines={klines.candles} fills={fills} currentEntry={state.position?.entry ?? null} livePrice={state.price} />
+            ) : (
+              <div className="empty">loading price chart…</div>
+            )}
+          </div>
 
           {state.tune && (
             <div className="panel rise d55">

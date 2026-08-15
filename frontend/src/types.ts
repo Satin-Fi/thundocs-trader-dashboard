@@ -25,6 +25,15 @@ export interface State {
   }
   strategy: string
   strategy_params: Record<string, number>
+  position: {
+    side: string
+    entry: number
+    qty: number
+    mark_price: number
+    unrealized_pnl: number
+    unrealized_pct: number
+    opened_at: string | null
+  } | null
   tune: {
     ts: string
     method: string
@@ -34,6 +43,22 @@ export interface State {
     candidates: { strategy: string; params: Record<string, number>; train_ret: number; test_ret: number; trades: number; win_rate: number }[]
   } | null
   updated: string
+}
+
+export interface Kline {
+  t: number
+  o: number
+  h: number
+  l: number
+  c: number
+  v: number
+}
+
+export interface Klines {
+  symbol: string
+  interval: string
+  price: number
+  candles: Kline[]
 }
 
 export interface Fill {

@@ -137,6 +137,23 @@ def last_buy(fills):
             return f
     return None
 
+def _open_position(price, open_btc, fills):
+    """Describe the currently open position (if any) for the dashboard."""
+    if open_btc <= 1e-8:
+        return None
+    fb = last_buy(fills)
+    entry = float(fb["price"]) if fb else price
+    qty = round(open_btc, 6)
+    return {
+        "side": "LONG",
+        "entry": round(entry, 2),
+        "qty": qty,
+        "mark_price": round(price, 2),
+        "unrealized_pnl": round((price - entry) * qty, 2),
+        "unrealized_pct": round((price / entry - 1) * 100, 2) if entry else 0.0,
+        "opened_at": fb["t"] if fb else None,
+    }
+
 def _interval_minutes():
     s = KL_INTERVAL
     return int(s[:-1]) if s[:-1].isdigit() else 15
@@ -505,6 +522,7 @@ def make_state():
         "equity_curve":equity,"portfolio":pa,
         "strategy": STRATEGY,
         "strategy_params": STRATEGY_PARAMS,
+        "position": _open_position(price, open_btc, fills),
         "tune": load_tune(),
         "creds_loaded": bool(creds().get("apiKey")),
         "updated":dt.datetime.now().isoformat(),
@@ -535,6 +553,18 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 rep = {"error": str(e)}
             self._send(200, rep or load_tune() or {"status": "no data"})
+        elif self.path.startswith("/api/klines"):
+            try:
+                kl = demo_get("/klines", {"symbol": SYMBOL, "interval": KL_INTERVAL, "limit": 120})
+                if not isinstance(kl, list):
+                    self._send(502, {"error": "klines unavailable"})
+                else:
+                    candles = [{"t": k[0], "o": float(k[1]), "h": float(k[2]),
+                                "l": float(k[3]), "c": float(k[4]), "v": float(k[5])} for k in kl]
+                    self._send(200, {"symbol": SYMBOL, "interval": KL_INTERVAL, "price": demo_price(), "candles": candles})
+            except Exception as e:
+                self._send(500, {"error": str(e)})
+
         elif self.path in ("/", "/index.html"):
             fpath = os.path.join(HERE, "static", "index.html")
             if os.path.exists(fpath):

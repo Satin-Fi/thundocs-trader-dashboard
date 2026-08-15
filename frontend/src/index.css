@@ -161,6 +161,18 @@ tbody tr:last-child td { border-bottom: none; }
 
 .err { color: var(--negative); font-size: 13px; padding: 40px 0; text-align: center; }
 
+/* current position card */
+.pos-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; padding: 6px 2px; }
+.pos-cell { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 10px; }
+.pos-k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.pos-v { font-size: 17px; font-weight: 700; color: var(--text); }
+.pos-v.pos { color: var(--positive); } .pos-v.neg { color: var(--negative); }
+
+/* price chart */
+.price-chart { display: block; background: rgba(10,14,25,0.35); border: 1px solid var(--border); border-radius: 12px; margin-top: 4px; }
+.lg-buy { color: var(--positive); font-weight: 700; }
+.lg-sell { color: var(--negative); font-weight: 700; }
+
 @media (max-width: 860px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 480px) { .kpis { grid-template-columns: 1fr; } .topbar { gap: 10px; } }
 @media (prefers-reduced-motion: reduce) {
