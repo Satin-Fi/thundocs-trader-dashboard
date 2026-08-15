@@ -118,16 +118,9 @@ export default function PriceChart({ klines, fills, position, livePrice, interva
         addLine(livePrice, '#22d3ee', 'ENTRY')
       }
 
-      // keep the PRICE scale including SL/TP in view (never touch the TIME axis
-      // here, so dragging/scrolling the chart does not snap back)
-      const lows = klines.map(k => k.l), highs = klines.map(k => k.h)
-      const prices = [...lows, ...highs, livePrice]
-      if (position) prices.push(position.entry, position.stop_loss, position.take_profit)
-      const pmin = Math.min(...prices), pmax = Math.max(...prices)
-      const pad = (pmax - pmin) * 0.1 || 1
-      chart.priceScale('right').applyOptions({ autoScale: false, priceRange: { from: pmin - pad, to: pmax + pad } })
-
-      // ONLY re-fit the TIME axis when the interval changes — never on a live tick
+      // ONLY re-fit the TIME axis when the interval changes — never on a live tick,
+      // so dragging/scrolling the chart does not snap back. (Price scale auto-fits,
+      // so SL/TP stay in view without us touching the time axis.)
       if (shownInterval.current !== interval) {
         chart.timeScale().fitContent()
         shownInterval.current = interval
