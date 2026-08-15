@@ -15,12 +15,14 @@ export default function App() {
   const [err, setErr] = useState('')
   const priceRef = useRef<HTMLSpanElement>(null)
   const prevPrice = useRef<number>(0)
+  const tfRef = useRef(tfState)
+  tfRef.current = tfState
 
   useEffect(() => {
     let alive = true
     const poll = async () => {
       try {
-        const [s, f, k] = await Promise.all([fetchState(), fetchFills(), fetchKlines(tfState)])
+        const [s, f, k] = await Promise.all([fetchState(), fetchFills(), fetchKlines(tfRef.current)])
         if (!alive) return
         if (priceRef.current && prevPrice.current) {
           const up = s.price > prevPrice.current
@@ -42,6 +44,13 @@ export default function App() {
     const id = setInterval(poll, 15000)
     return () => { alive = false; clearInterval(id) }
   }, [])
+
+  // instantly refetch klines when the timeframe changes (don't wait for the 15s poll)
+  useEffect(() => {
+    let alive = true
+    fetchKlines(tfState).then(k => { if (alive) setKlines(k) }).catch(() => {})
+    return () => { alive = false }
+  }, [tfState])
 
   const eq = state?.equity_curve ?? []
   const usd = (n: number) => '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
