@@ -125,7 +125,7 @@ export default function PriceChart({ klines, fills, position, livePrice, interva
       if (position) prices.push(position.entry, position.stop_loss, position.take_profit)
       const pmin = Math.min(...prices), pmax = Math.max(...prices)
       const pad = (pmax - pmin) * 0.1 || 1
-      chart.priceScale('right').applyOptions({ autoScale: false, visibleRange: { from: pmin - pad, to: pmax + pad } })
+      chart.priceScale('right').applyOptions({ autoScale: false, priceRange: { from: pmin - pad, to: pmax + pad } })
 
       // ONLY re-fit the TIME axis when the interval changes — never on a live tick
       if (shownInterval.current !== interval) {
