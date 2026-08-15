@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchState, fetchFills, fetchPrice, fetchKlines } from './api'
+import { fetchState, fetchFills, fetchKlines } from './api'
+import { useBinancePrice } from './useBinancePrice'
 import type { State, Fill, Klines } from './types'
 import Kpi from './components/Kpi'
 import EquityChart from './components/EquityChart'
@@ -19,6 +20,8 @@ export default function App() {
   const tfRef = useRef(tfState)
   tfRef.current = tfState
   const cacheRef = useRef<Record<string, Klines>>({})
+  // REAL-TIME price via Binance WebSocket (sub-second); falls back to REST inside the hook
+  const wsPrice = useBinancePrice('btcusdt')
 
   // prefetch every timeframe once in the background so switching is instant
   useEffect(() => {
@@ -31,31 +34,19 @@ export default function App() {
     return () => { alive = false }
   }, [])
 
-  // FAST poll (2s): price only — via lightweight /api/price (no signed account
-  // call) so the ticker + live line move in near-real-time.
+  // LIVE price sync — driven by the WebSocket (sub-second). We just reflect
+  // wsPrice into the ticker + state.price here; the WS hook handles its own
+  // REST fallback if the socket drops. No 2s polling loop needed.
   useEffect(() => {
-    let alive = true
-    const poll = async () => {
-      try {
-        const p = await fetchPrice()
-        if (!alive) return
-        if (priceRef.current && prevPrice.current) {
-          const up = p.price > prevPrice.current
-          priceRef.current.className = 'px ' + (up ? 'up' : 'down')
-        }
-        prevPrice.current = p.price
-        setState(s => (s ? { ...s, price: p.price } : s))
-        setOnline(true)
-      } catch (e) {
-        if (!alive) return
-        setOnline(false)
-        setErr(e instanceof Error ? e.message : 'offline')
-      }
+    if (wsPrice == null) return
+    if (priceRef.current && prevPrice.current) {
+      const up = wsPrice > prevPrice.current
+      priceRef.current.className = 'px ' + (up ? 'up' : 'down')
     }
-    poll()
-    const id = setInterval(poll, 2000)
-    return () => { alive = false; clearInterval(id) }
-  }, [])
+    prevPrice.current = wsPrice
+    setState(s => (s ? { ...s, price: wsPrice } : s))
+    setOnline(true)
+  }, [wsPrice])
 
   // MEDIUM poll (15s): full state (position, portfolio, funds) + fills. Heavier
   // (signed /account call) so we don't run it every 2s.
@@ -225,7 +216,7 @@ export default function App() {
               </div>
             </div>
             {klines ? (
-              <PriceChart klines={klines.candles} fills={fills} position={state.position} livePrice={state.price} interval={tfState} />
+              <PriceChart klines={klines.candles} fills={fills} position={state.position} livePrice={wsPrice ?? state?.price ?? 0} interval={tfState} />
             ) : (
               <div className="empty">loading price chart…</div>
             )}

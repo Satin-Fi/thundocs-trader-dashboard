@@ -105,17 +105,17 @@ export default function PriceChart({ klines, fills, position, livePrice, interva
         }))
       candle.setMarkers(markers)
 
-      // entry / SL / TP lines — vivid, distinct colors so they don't blend into candles
+      // entry / SL / TP lines — ONLY when there is a real open position.
+      // When flat, draw nothing here (the white LIVE line still shows the price),
+      // so we never imply a trade entry that didn't happen.
       slLinesRef.current.forEach(l => { try { candle.removePriceLine(l) } catch {} })
       slLinesRef.current = []
-      const addLine = (price: number, color: string, title: string) =>
-        slLinesRef.current.push(candle.createPriceLine({ price, color, lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title }))
       if (position) {
+        const addLine = (price: number, color: string, title: string) =>
+          slLinesRef.current.push(candle.createPriceLine({ price, color, lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title }))
         addLine(position.entry, '#22d3ee', 'ENTRY')        // cyan
         addLine(position.stop_loss, '#f43f5e', 'SL')       // rose/red
         addLine(position.take_profit, '#facc15', 'TP')     // gold
-      } else {
-        addLine(livePrice, '#22d3ee', 'ENTRY')
       }
 
       // ONLY re-fit the TIME axis when the interval changes — never on a live tick,
