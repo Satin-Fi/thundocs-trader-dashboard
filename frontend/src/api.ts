@@ -1,8 +1,15 @@
 import type { State, Fill } from './types'
 
-// VITE_API_URL is baked into the build via vite.config.ts define (falls back to
-// the desktop tunnel). Set VITE_API_URL at Vercel build time to override.
-const API_URL: string = (import.meta.env.VITE_API_URL as string || '').replace(/\/$/, '')
+// API base is set at runtime via /config.js (window.__API_URL__), which Vercel
+// serves verbatim — no build-time env needed. Falls back to VITE_API_URL if set.
+declare global {
+  interface Window { __API_URL__?: string }
+}
+const API_URL: string = (
+  (typeof window !== 'undefined' && window.__API_URL__) ||
+  (import.meta.env.VITE_API_URL as string) ||
+  ''
+).replace(/\/$/, '')
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${API_URL}${path}`)
