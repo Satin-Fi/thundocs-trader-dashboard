@@ -138,12 +138,17 @@ def last_buy(fills):
     return None
 
 def _open_position(price, open_btc, fills):
-    """Describe the currently open position (if any) for the dashboard."""
+    """Describe the currently open position (if any) for the dashboard, including
+    stop-loss / take-profit levels derived from the bot's SL_PCT / TP_PCT."""
     if open_btc <= 1e-8:
         return None
     fb = last_buy(fills)
     entry = float(fb["price"]) if fb else price
     qty = round(open_btc, 6)
+    sl = round(entry * (1 - SL_PCT), 2)
+    tp = round(entry * (1 + TP_PCT), 2)
+    risk = (entry - sl) * qty
+    reward = (tp - entry) * qty
     return {
         "side": "LONG",
         "entry": round(entry, 2),
@@ -151,6 +156,11 @@ def _open_position(price, open_btc, fills):
         "mark_price": round(price, 2),
         "unrealized_pnl": round((price - entry) * qty, 2),
         "unrealized_pct": round((price / entry - 1) * 100, 2) if entry else 0.0,
+        "stop_loss": sl,
+        "take_profit": tp,
+        "risk": round(risk, 2),
+        "reward": round(reward, 2),
+        "rr": round(reward / risk, 2) if risk else 0.0,
         "opened_at": fb["t"] if fb else None,
     }
 

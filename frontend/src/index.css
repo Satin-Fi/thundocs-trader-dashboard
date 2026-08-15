@@ -17,6 +17,8 @@
   --accent-glow: rgba(0, 217, 146, 0.22);
   --negative: #fb565b;    /* coral — loss */
   --negative-glow: rgba(251, 86, 91, 0.18);
+  --pos: #00d992;        /* same as accent, hex alias for SVG fills */
+  --neg: #fb565b;        /* same as negative, hex alias for SVG fills */
   --warn: #ffba00;
   --font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -169,7 +171,8 @@ tbody tr:last-child td { border-bottom: none; }
 .pos-v.pos { color: var(--positive); } .pos-v.neg { color: var(--negative); }
 
 /* price chart */
-.price-chart { display: block; background: rgba(10,14,25,0.35); border: 1px solid var(--border); border-radius: 12px; margin-top: 4px; }
+.price-chart { display: block; width: 100%; height: auto; aspect-ratio: 1000 / 420; background: rgba(10,14,25,0.35); border: 1px solid var(--border); border-radius: 12px; margin-top: 4px; cursor: crosshair; }
+
 .lg-buy { color: var(--positive); font-weight: 700; }
 .lg-sell { color: var(--negative); font-weight: 700; }
 

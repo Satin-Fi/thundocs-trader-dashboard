@@ -132,6 +132,9 @@ export default function App() {
                 <div className="pos-cell"><span className="pos-k">Qty (BTC)</span><span className="pos-v">{state.position.qty}</span></div>
                 <div className="pos-cell"><span className="pos-k">Mark</span><span className="pos-v">${state.position.mark_price.toLocaleString()}</span></div>
                 <div className="pos-cell"><span className="pos-k">Unrealized P&L</span><span className={`pos-v ${state.position.unrealized_pnl >= 0 ? 'pos' : 'neg'}`}>{state.position.unrealized_pnl >= 0 ? '+' : ''}{state.position.unrealized_pnl.toFixed(2)}</span></div>
+                <div className="pos-cell"><span className="pos-k">Stop Loss</span><span className="pos-v neg">${state.position.stop_loss.toLocaleString()}</span></div>
+                <div className="pos-cell"><span className="pos-k">Take Profit</span><span className="pos-v pos">${state.position.take_profit.toLocaleString()}</span></div>
+                <div className="pos-cell"><span className="pos-k">Risk / Reward</span><span className="pos-v">{state.position.rr.toFixed(2)} : 1</span></div>
                 <div className="pos-cell"><span className="pos-k">Opened</span><span className="pos-v">{state.position.opened_at ? new Date(state.position.opened_at).toLocaleString() : '—'}</span></div>
               </div>
             </div>
@@ -147,11 +150,11 @@ export default function App() {
             <div className="head">
               <h2>{state.symbol} · Price ({klines?.interval ?? '15m'})</h2>
               <span className="hint">
-                <span className="lg-buy">▲ buy</span> <span className="lg-sell">▼ sell</span> · dashed = entry · {klines ? klines.candles.length : 0} candles
+                <span className="lg-buy">▲ buy</span> <span className="lg-sell">▼ sell</span> · <span style={{color:'var(--accent)'}}>— entry</span> <span style={{color:'var(--neg)'}}>— SL</span> <span style={{color:'var(--pos)'}}>— TP</span> · hover for OHLC · {klines ? klines.candles.length : 0} candles
               </span>
             </div>
             {klines ? (
-              <PriceChart klines={klines.candles} fills={fills} currentEntry={state.position?.entry ?? null} livePrice={state.price} />
+              <PriceChart klines={klines.candles} fills={fills} position={state.position} livePrice={state.price} />
             ) : (
               <div className="empty">loading price chart…</div>
             )}

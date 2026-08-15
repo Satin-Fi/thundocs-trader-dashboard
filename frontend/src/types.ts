@@ -32,6 +32,11 @@ export interface State {
     mark_price: number
     unrealized_pnl: number
     unrealized_pct: number
+    stop_loss: number
+    take_profit: number
+    risk: number
+    reward: number
+    rr: number
     opened_at: string | null
   } | null
   tune: {
