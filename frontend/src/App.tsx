@@ -7,6 +7,7 @@ import PriceChart from './components/PriceChart'
 import TradeTable from './components/TradeTable'
 
 export default function App() {
+  const TIMEFRAMES = ['5m', '15m', '30m', '1h', '4h', '12h', '1d', '1w']
   const [state, setState] = useState<State | null>(null)
   const [fills, setFills] = useState<Fill[]>([])
   const [klines, setKlines] = useState<Klines | null>(null)
@@ -17,12 +18,24 @@ export default function App() {
   const prevPrice = useRef<number>(0)
   const tfRef = useRef(tfState)
   tfRef.current = tfState
+  const cacheRef = useRef<Record<string, Klines>>({})
+
+  // prefetch every timeframe once in the background so switching is instant
+  useEffect(() => {
+    let alive = true
+    TIMEFRAMES.forEach(iv => {
+      fetchKlines(iv)
+        .then(k => { if (alive) { cacheRef.current[iv] = k; if (tfRef.current === iv) setKlines(k) } })
+        .catch(() => {})
+    })
+    return () => { alive = false }
+  }, [])
 
   useEffect(() => {
     let alive = true
     const poll = async () => {
       try {
-        const [s, f, k] = await Promise.all([fetchState(), fetchFills(), fetchKlines(tfRef.current)])
+        const [s, f] = await Promise.all([fetchState(), fetchFills()])
         if (!alive) return
         if (priceRef.current && prevPrice.current) {
           const up = s.price > prevPrice.current
@@ -31,6 +44,10 @@ export default function App() {
         prevPrice.current = s.price
         setState(s)
         setFills(f)
+        // refresh only the active interval (others refresh on click)
+        const k = await fetchKlines(tfRef.current)
+        if (!alive) return
+        cacheRef.current[tfRef.current] = k
         setKlines(k)
         setOnline(true)
         setErr('')
@@ -45,10 +62,14 @@ export default function App() {
     return () => { alive = false; clearInterval(id) }
   }, [])
 
-  // instantly refetch klines when the timeframe changes (don't wait for the 15s poll)
+  // instant switch: show cached data immediately, then refresh in background
   useEffect(() => {
     let alive = true
-    fetchKlines(tfState).then(k => { if (alive) setKlines(k) }).catch(() => {})
+    const cached = cacheRef.current[tfState]
+    if (cached) setKlines(cached)
+    fetchKlines(tfState)
+      .then(k => { if (alive) { cacheRef.current[tfState] = k; if (tfRef.current === tfState) setKlines(k) } })
+      .catch(() => {})
     return () => { alive = false }
   }, [tfState])
 
@@ -161,7 +182,7 @@ export default function App() {
               <h2>{state.symbol} · Price</h2>
               <div className="chart-tools">
                 <div className="tf-switch">
-                  {['15m', '1h', '4h', '1d'].map(tf => (
+                  {TIMEFRAMES.map(tf => (
                     <button key={tf} className={tfState === tf ? 'active' : ''} onClick={() => setTf(tf)}>{tf}</button>
                   ))}
                 </div>
@@ -171,7 +192,7 @@ export default function App() {
               </div>
             </div>
             {klines ? (
-              <PriceChart klines={klines.candles} fills={fills} position={state.position} livePrice={state.price} />
+              <PriceChart klines={klines.candles} fills={fills} position={state.position} livePrice={state.price} interval={tfState} />
             ) : (
               <div className="empty">loading price chart…</div>
             )}

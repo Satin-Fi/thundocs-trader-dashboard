@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { createChart, ColorType, type IChartApi, type ISeriesApi, type CandlestickData, type UTCTimestamp, type SeriesMarker, type Time, type IPriceLine } from 'lightweight-charts'
+import { createChart, ColorType, type IChartApi, type ISeriesApi, type UTCTimestamp, type SeriesMarker, type Time, type IPriceLine } from 'lightweight-charts'
 import type { Kline, Fill } from '../types'
 
 interface Props {
@@ -11,17 +11,20 @@ interface Props {
     take_profit: number
   } | null
   livePrice: number
+  interval: string
 }
 
-export default function PriceChart({ klines, fills, position, livePrice }: Props) {
+export default function PriceChart({ klines, fills, position, livePrice, interval }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const volRef = useRef<ISeriesApi<'Histogram'> | null>(null)
-  const linesRef = useRef<IPriceLine[]>([])
+  const slLinesRef = useRef<IPriceLine[]>([])      // entry / SL / TP lines
+  const liveLineRef = useRef<IPriceLine | null>(null)
+  const shownInterval = useRef<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
-  // create chart once, with a fixed width from layout
+  // create chart once, with explicit width
   useLayoutEffect(() => {
     const el = wrapRef.current
     if (!el) return
@@ -75,28 +78,24 @@ export default function PriceChart({ klines, fills, position, livePrice }: Props
     return () => ro.disconnect()
   }, [])
 
-  // push data + markers + price lines whenever inputs change
+  // push candle/volume data + markers + entry/SL/TP lines when data or position changes
   useEffect(() => {
-    const candle = candleRef.current
-    const vol = volRef.current
-    const chart = chartRef.current
+    const candle = candleRef.current, vol = volRef.current, chart = chartRef.current
     if (!candle || !vol || !chart) return
     setErr(null)
     try {
-      const cdata: CandlestickData[] = klines.map(k => ({
+      candle.setData(klines.map(k => ({
         time: (k.t / 1000) as UTCTimestamp,
         open: k.o, high: k.h, low: k.l, close: k.c,
-      }))
-      candle.setData(cdata)
+      })))
       vol.setData(klines.map(k => ({
         time: (k.t / 1000) as UTCTimestamp,
         value: k.v,
         color: k.c >= k.o ? 'rgba(0,217,146,0.4)' : 'rgba(251,86,91,0.4)',
       })))
 
-      // trade markers (buy/sell) — guard out-of-range times
       const markers: SeriesMarker<Time>[] = fills
-        .filter(f => f.side === 'BUY' || f.side === 'SELL' && f.t)
+        .filter(f => (f.side === 'BUY' || f.side === 'SELL') && f.t)
         .map(f => ({
           time: (Date.parse(f.t) / 1000) as UTCTimestamp,
           position: (f.side === 'BUY' ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
@@ -106,22 +105,39 @@ export default function PriceChart({ klines, fills, position, livePrice }: Props
         }))
       candle.setMarkers(markers)
 
-      // price lines: entry / SL / TP / live
-      linesRef.current.forEach(l => { try { candle.removePriceLine(l) } catch {} })
-      linesRef.current = []
+      // entry / SL / TP lines (re-created each data change)
+      slLinesRef.current.forEach(l => { try { candle.removePriceLine(l) } catch {} })
+      slLinesRef.current = []
       const addLine = (price: number, color: string, title: string, style: 0 | 2 | 3 = 2) =>
-        linesRef.current.push(candle.createPriceLine({ price, color, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title }))
+        slLinesRef.current.push(candle.createPriceLine({ price, color, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title }))
       addLine(position?.entry ?? livePrice, '#00d992', 'ENTRY')
       if (position) {
         addLine(position.stop_loss, '#fb565b', 'SL')
         addLine(position.take_profit, '#00d992', 'TP')
       }
-      addLine(livePrice, '#e8edf5', 'LIVE', 3)
-      chart.timeScale().fitContent()
+
+      // ONLY re-fit when the interval actually changes — never on a live-price tick,
+      // so the user can scroll/drag without being yanked back every 15s.
+      if (shownInterval.current !== interval) {
+        chart.timeScale().fitContent()
+        shownInterval.current = interval
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
     }
-  }, [klines, fills, position, livePrice])
+  }, [klines, fills, position, interval])
+
+  // live price line — updates on every tick WITHOUT touching data or re-fitting
+  useEffect(() => {
+    const candle = candleRef.current
+    if (!candle) return
+    try {
+      if (liveLineRef.current) candle.removePriceLine(liveLineRef.current)
+      liveLineRef.current = candle.createPriceLine({
+        price: livePrice, color: '#e8edf5', lineWidth: 1, lineStyle: 3, axisLabelVisible: true, title: 'LIVE',
+      })
+    } catch {}
+  }, [livePrice])
 
   if (err) {
     return (
