@@ -26,6 +26,7 @@ MAX_HOLD = int(os.getenv("MAX_HOLD_CANDLES", "12"))  # time-stop: ~3h at 15m
 SMA_PERIOD = int(os.getenv("SMA_PERIOD", "50"))   # trend filter
 KL_LIMIT = int(os.getenv("KL_LIMIT", "60"))       # candles fetched per tick
 SIZE_MIN = 10.0                                    # min notional to trade
+DUST = 0.00002                                     # BTC below this is dust: treat as flat
 PORT = int(os.getenv("PORT", "8000"))
 
 def log(m):
@@ -295,8 +296,8 @@ def tick():
         btc = bal.get("BTC",0.0); usdt = bal.get("USDT",0.0)
         p = STRATEGY_PARAMS
 
-        if btc*price < 1e-4:
-            # FLAT — ask the active strategy for an entry; gate on recent edge
+        if btc*price < DUST*price or btc < DUST:
+            # FLAT (or only dust) — ask the active strategy for an entry; gate on recent edge
             sig, reason = gen_signal(closes, vols, len(closes)-1, 0, 0.0, 0, p, STRATEGY)
             recent = closes[-120:] if len(closes) >= 120 else closes
             eg = backtest_closes(recent, STRATEGY, p)
@@ -319,19 +320,23 @@ def tick():
                 log(f"HOLD (flat) [{STRATEGY}] sig={sig} edge_ok={edge_ok} ({reason})")
         else:
             # HOLDING — exit via gen_signal (SL/TP/time-stop + strategy exit)
-            fb = last_buy(load_fills())
-            entry = float(fb["price"]) if fb else price
-            held = int((dt.datetime.now() - dt.datetime.fromisoformat(fb["t"])).total_seconds()/60/_interval_minutes()) if fb else 0
-            sig, reason = gen_signal(closes, vols, len(closes)-1, 1, entry, held, p, STRATEGY)
-            if sig == "SELL":
-                sq = fmt_qty(btc)
-                o = signed("/order", {"symbol":SYMBOL,"side":"SELL","type":"MARKET","quantity":sq}, "POST")
-                if isinstance(o, dict) and o.get("orderId"):
-                    log(f"SELL[{STRATEGY}] qty={sq} @ {price:.2f} ({reason}) -> {o['orderId']}")
-                    record_fill("SELL", sq, price, o["orderId"])
-                else: log(f"SELL FAILED {o}")
+            if btc < DUST:
+                # only dust left (e.g. SELL rounding) — nothing to exit, skip to avoid 400
+                log(f"HOLD (dust {btc:.6f} BTC) — no exit")
             else:
-                log(f"HOLD (in pos) [{STRATEGY}] RSI={val:.1f} PnL={(price/entry-1)*100:+.1f}% held={held}c ({reason})")
+                fb = last_buy(load_fills())
+                entry = float(fb["price"]) if fb else price
+                held = int((dt.datetime.now() - dt.datetime.fromisoformat(fb["t"])).total_seconds()/60/_interval_minutes()) if fb else 0
+                sig, reason = gen_signal(closes, vols, len(closes)-1, 1, entry, held, p, STRATEGY)
+                if sig == "SELL":
+                    sq = fmt_qty(btc)
+                    o = signed("/order", {"symbol":SYMBOL,"side":"SELL","type":"MARKET","quantity":sq}, "POST")
+                    if isinstance(o, dict) and o.get("orderId"):
+                        log(f"SELL[{STRATEGY}] qty={sq} @ {price:.2f} ({reason}) -> {o['orderId']}")
+                        record_fill("SELL", sq, price, o["orderId"])
+                    else: log(f"SELL FAILED {o}")
+                else:
+                    log(f"HOLD (in pos) [{STRATEGY}] RSI={val:.1f} PnL={(price/entry-1)*100:+.1f}% held={held}c ({reason})")
     except Exception as e:
         log(f"TICK ERROR {e}")
 
@@ -513,7 +518,9 @@ def make_state():
         for b in acc.get("balances", []):
             if b["asset"]=="USDT": usdt=float(b["free"])
             if b["asset"]=="BTC": live_btc=float(b["free"])
-    open_btc = live_btc if abs(live_btc - btc_bal) > 1e-9 else btc_bal
+    open_btc = live_btc if abs(live_btc - btc_bal) > DUST else btc_bal
+    if open_btc < DUST:
+        open_btc = 0.0
     unreal = open_btc*price; realized = gained-spent
     total_funds = usdt + unreal
     equity=[]; rb=0.0; ru=0.0

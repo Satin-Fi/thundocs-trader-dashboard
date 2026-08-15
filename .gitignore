@@ -18,3 +18,5 @@ frontend/dist.zip
 __pycache__/
 *.pyc
 backend/fills.jsonl
+
+.vercel
