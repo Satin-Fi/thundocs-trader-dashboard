@@ -31,6 +31,8 @@ export default function App() {
     return () => { alive = false }
   }, [])
 
+  // FAST poll (2s): price + position + fills — keeps the price ticker and live
+  // line moving in (near) real time without re-fetching heavy candle data.
   useEffect(() => {
     let alive = true
     const poll = async () => {
@@ -44,11 +46,6 @@ export default function App() {
         prevPrice.current = s.price
         setState(s)
         setFills(f)
-        // refresh only the active interval (others refresh on click)
-        const k = await fetchKlines(tfRef.current)
-        if (!alive) return
-        cacheRef.current[tfRef.current] = k
-        setKlines(k)
         setOnline(true)
         setErr('')
       } catch (e) {
@@ -58,7 +55,24 @@ export default function App() {
       }
     }
     poll()
-    const id = setInterval(poll, 15000)
+    const id = setInterval(poll, 2000)
+    return () => { alive = false; clearInterval(id) }
+  }, [])
+
+  // SLOW poll (20s): refresh the active interval's candles. Candle bodies only
+  // change per candle anyway, so 20s is plenty and avoids hammering the API.
+  useEffect(() => {
+    let alive = true
+    const poll = async () => {
+      try {
+        const k = await fetchKlines(tfRef.current)
+        if (!alive) return
+        cacheRef.current[tfRef.current] = k
+        setKlines(k)
+      } catch {}
+    }
+    poll()
+    const id = setInterval(poll, 20000)
     return () => { alive = false; clearInterval(id) }
   }, [])
 
