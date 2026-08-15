@@ -21,7 +21,9 @@ MAX_NOTIONAL = float(os.getenv("MAX_NOTIONAL", "25"))
 RSI_LOW, RSI_HIGH = 45, 55   # RSI_LOW = entry RSI ceiling; RSI_HIGH = neutral exit RSI (mean-reversion target)
 # Risk / execution controls (all env-overridable, safe defaults)
 SL_PCT = float(os.getenv("SL_PCT", "0.03"))      # 3% hard stop-loss
-TP_PCT = float(os.getenv("TP_PCT", "0.05"))       # 5% take-profit
+TP_PCT = float(os.getenv("TP_PCT", "0.05"))       # 5% take-profit (fallback when no S/R)
+SL_CAP = float(os.getenv("SL_CAP", "0.05"))       # max SL distance from entry (structure-aware)
+TP_CAP = float(os.getenv("TP_CAP", "0.05"))       # max TP distance from entry (structure-aware)
 MAX_HOLD = int(os.getenv("MAX_HOLD_CANDLES", "12"))  # time-stop: ~3h at 15m
 SMA_PERIOD = int(os.getenv("SMA_PERIOD", "50"))   # trend filter
 KL_LIMIT = int(os.getenv("KL_LIMIT", "60"))       # candles fetched per tick
@@ -153,15 +155,33 @@ def last_buy(fills):
     return None
 
 def _open_position(price, open_btc, fills):
-    """Describe the currently open position (if any) for the dashboard, including
-    stop-loss / take-profit levels derived from the bot's SL_PCT / TP_PCT."""
+    """Describe the currently open position (if any), including stop-loss /
+    take-profit levels. SL/TP are structure-aware: TP targets the nearest
+    resistance above entry (capped at +TP_CAP), SL the nearest support below
+    (capped at -SL_CAP); falls back to fixed % if no zone is near."""
     if open_btc <= 1e-8:
         return None
     fb = last_buy(fills)
     entry = float(fb["price"]) if fb else price
     qty = round(open_btc, 6)
-    sl = round(entry * (1 - SL_PCT), 2)
-    tp = round(entry * (1 + TP_PCT), 2)
+    # structure-aware targets via the bot's own S/R analysis
+    tp, sl = None, None
+    try:
+        kl = demo_get("/klines", {"symbol": SYMBOL, "interval": KL_INTERVAL, "limit": 300})
+        if isinstance(kl, list) and len(kl) >= 20:
+            highs = [float(k[2]) for k in kl]; lows = [float(k[3]) for k in kl]
+            closes_k = [float(k[4]) for k in kl]; vols_k = [float(k[5]) for k in kl]
+            zones = sr_zones(highs, lows, closes_k, vols_k)
+            res = min((z["level"] for z in zones if z["type"] == "R" and z["level"] > entry), default=None)
+            sup = max((z["level"] for z in zones if z["type"] == "S" and z["level"] < entry), default=None)
+            if res: tp = min(res, entry * (1 + TP_CAP))
+            if sup: sl = max(sup, entry * (1 - SL_CAP))
+    except Exception:
+        pass
+    if tp is None: tp = round(entry * (1 + TP_PCT), 2)
+    else: tp = round(tp, 2)
+    if sl is None: sl = round(entry * (1 - SL_PCT), 2)
+    else: sl = round(sl, 2)
     risk = (entry - sl) * qty
     reward = (tp - entry) * qty
     return {
@@ -220,6 +240,17 @@ def macd(closes, fast=12, slow=26, sig=9):
 def vol_avg(vols, n):
     v = vols[-n:] if len(vols) >= n else vols
     return sum(v) / len(v) if v else 0.0
+
+def ema_series(vals, nn):
+    out = []
+    if not vals:
+        return out
+    k = 2.0 / (nn + 1)
+    e = vals[0]
+    for p in vals:
+        e = p * k + e * (1 - k)
+        out.append(e)
+    return out
 
 def sr_zones(highs, lows, closes, vols, swing=5, merge_pct=0.4, top_n=6):
     """Support/Resistance zones from the bot's own analysis of the candles.
@@ -343,7 +374,7 @@ def compute_indicators(interval=KL_INTERVAL, limit=300):
     sig = "HOLD"; reason = ""
     try:
         s, r = gen_signal(closes, vols, n - 1, (1 if btc_open_for_signal() > DUST else 0),
-                          closes[-1], 0, STRATEGY_PARAMS, STRATEGY)
+                          closes[-1], 0, STRATEGY_PARAMS, STRATEGY, sr)
         sig, reason = s, r
     except Exception as e:
         sig, reason = "HOLD", f"err {e}"
@@ -377,15 +408,70 @@ def btc_open_for_signal():
         pass
     return 0.0
 
-# --- Strategy state (selected + tuned by the self-tuner) ---
-STRATEGY = os.getenv("STRATEGY", "reversion")   # "reversion" | "breakout"
-STRATEGY_PARAMS = {"entry_ceil": 45, "exit_rsi": 55}   # reversion defaults
-# breakout defaults kept here for reference / when STRATEGY switches
-BREAKOUT_PARAMS = {"lookback": 20, "vol_mult": 1.5}
+# --- Strategy library (selectable from the dashboard) ---
+# Each strategy: human name, description, default params, and the logic lives in
+# gen_signal() (keyed by `strategy`). SL/TP are still shared hard stops, but the
+# reversion TP is now structure-aware (nearest resistance) so the plotted target
+# is honest about where the bot intends to exit.
+STRATEGY_LIB = {
+    "reversion": {
+        "name": "RSI Reversion",
+        "desc": "Buys when RSI dips into the low band and turns up; exits when RSI recovers. Small, frequent wins in ranging markets.",
+        "params": {"entry_ceil": 45, "exit_rsi": 55},
+    },
+    "breakout": {
+        "name": "Donchian Breakout",
+        "desc": "Buys when price breaks above the N-bar high with volume + MACD confirmation; exits on breakdown. Catches trend moves.",
+        "params": {"lookback": 20, "vol_mult": 1.5},
+    },
+    "ema_trend": {
+        "name": "EMA Trend",
+        "desc": "Buys when price is above EMA50 and EMA20 crosses above EMA50 (golden cross); exits on death cross / close below EMA50. Trend-following.",
+        "params": {"fast": 20, "slow": 50},
+    },
+    "sr_bounce": {
+        "name": "S/R Bounce",
+        "desc": "Buys near a detected support zone with RSI turning up; targets the nearest resistance. Structure-based mean reversion.",
+        "params": {"entry_ceil": 45, "exit_rsi": 55, "zone_pct": 0.4},
+    },
+}
+STRATEGY_FILE = os.path.join(HERE, "strategy.json")
 
-def gen_signal(closes, vols, i, position, entry, held, p, strategy):
+def _load_strategy():
+    global STRATEGY, STRATEGY_PARAMS
+    key = os.getenv("STRATEGY", "reversion")
+    if os.path.exists(STRATEGY_FILE):
+        try:
+            d = json.load(open(STRATEGY_FILE))
+            if d.get("strategy") in STRATEGY_LIB:
+                key = d["strategy"]
+        except Exception:
+            pass
+    STRATEGY = key
+    STRATEGY_PARAMS = dict(STRATEGY_LIB[key]["params"])
+
+_load_strategy()
+
+def set_strategy(key):
+    """Switch the active strategy (validates, persists to strategy.json, updates params)."""
+    global STRATEGY, STRATEGY_PARAMS
+    if key not in STRATEGY_LIB:
+        return False
+    STRATEGY = key
+    STRATEGY_PARAMS = dict(STRATEGY_LIB[key]["params"])
+    try:
+        json.dump({"strategy": key}, open(STRATEGY_FILE, "w"))
+    except Exception:
+        pass
+    log(f"STRATEGY SWITCHED -> {key}")
+    return True
+
+def get_strategy_key():
+    return STRATEGY
+def gen_signal(closes, vols, i, position, entry, held, p, strategy, sr_zones=None):
     """Unified entry/exit signal for a given strategy.
-    Returns ("BUY"|"SELL"|"HOLD", reason). Shared SL/TP/time-stop on exits."""
+    Returns ("BUY"|"SELL"|"HOLD", reason). Shared SL/TP/time-stop on exits.
+    `sr_zones` (optional) feeds structure-based strategies (sr_bounce)."""
     px = closes[i]
     if position == 0:
         if strategy == "reversion":
@@ -397,6 +483,23 @@ def gen_signal(closes, vols, i, position, entry, held, p, strategy):
             if len(recent) >= 10 and rp <= r and r <= min(recent) + 3.0:
                 return ("BUY", f"RSI near-low {r:.0f}")
             return ("HOLD", f"RSI {rsi(closes[:i+1]):.0f}")
+        elif strategy == "ema_trend":
+            f_, s_ = p.get("fast", 20), p.get("slow", 50)
+            if i < s_:
+                return ("HOLD", "warmup")
+            ema_f = ema_series(closes[:i+1], f_); ema_s = ema_series(closes[:i+1], s_)
+            if ema_f[-1] > ema_s[-1] and ema_f[-2] <= ema_s[-2] and px > ema_s[-1]:
+                return ("BUY", f"EMA golden cross {ema_f[-1]:.0f}>{ema_s[-1]:.0f}")
+            return ("HOLD", "below EMA trend")
+        elif strategy == "sr_bounce":
+            if not sr_zones:
+                return ("HOLD", "no S/R yet")
+            # nearest support at/below current price
+            sup = max((z["level"] for z in sr_zones if z["type"] == "S" and z["level"] <= px * 1.002), default=None)
+            r = rsi(closes[:i+1]); rp = rsi(closes[:i])
+            if sup and abs(px - sup) / sup <= p.get("zone_pct", 0.4)/100.0 and r < p["entry_ceil"] and rp <= r:
+                return ("BUY", f"S/R bounce {sup:.0f} RSI {r:.0f}")
+            return ("HOLD", f"RSI {r:.0f} no support")
         else:  # breakout / momentum
             lb = p.get("lookback", 20)
             if i < lb:
@@ -417,7 +520,22 @@ def gen_signal(closes, vols, i, position, entry, held, p, strategy):
         if strategy == "reversion":
             if rsi(closes[:i+1]) >= p["exit_rsi"]:
                 return ("SELL", f"RSI>={p['exit_rsi']}")
-        else:
+        elif strategy == "sr_bounce":
+            if rsi(closes[:i+1]) >= p["exit_rsi"]:
+                return ("SELL", f"RSI>={p['exit_rsi']}")
+            res = min((z["level"] for z in sr_zones if z["type"] == "R" and z["level"] >= entry), default=None)
+            if res and px >= res * 0.999:
+                return ("SELL", f"hit resistance {res:.0f}")
+        elif strategy == "ema_trend":
+            f_, s_ = p.get("fast", 20), p.get("slow", 50)
+            if i < s_:
+                return ("HOLD", "warmup")
+            ema_f = ema_series(closes[:i+1], f_); ema_s = ema_series(closes[:i+1], s_)
+            if ema_f[-1] < ema_s[-1] and ema_f[-2] >= ema_s[-2]:
+                return ("SELL", f"EMA death cross")
+            if px < ema_s[-1]:
+                return ("SELL", f"below EMA50 {ema_s[-1]:.0f}")
+        else:  # breakout
             lb = p.get("lookback", 20)
             if i >= lb and px < min(closes[i-lb:i]):
                 return ("SELL", "breakdown")
@@ -428,6 +546,13 @@ def gen_signal(closes, vols, i, position, entry, held, p, strategy):
 def record_fill(side, qty, price, oid):
     with open(FILL_LOG, "a") as f:
         f.write(json.dumps({"t": dt.datetime.now().isoformat(), "side": side, "qty": qty, "price": price, "order": oid}) + "\n")
+
+# last realized exit (reason + price + ts) — surfaced on the dashboard so the
+# user can see WHY the bot closed the previous trade (RSI / TP / SL / time-stop).
+_last_exit = None
+def _record_exit(reason, price):
+    global _last_exit
+    _last_exit = {"reason": reason, "price": round(price, 2), "t": dt.datetime.now().isoformat()}
 
 def load_fills():
     out=[]
@@ -458,6 +583,9 @@ def tick():
             log("KLINES too short"); return
         closes = [float(k[4]) for k in kl]
         vols = [float(k[5]) for k in kl]
+        highs = [float(k[2]) for k in kl]
+        lows = [float(k[3]) for k in kl]
+        sr = sr_zones(highs, lows, closes, vols)
         val = rsi(closes)
         acc = signed("/account", {})
         if not isinstance(acc, dict) or "balances" not in acc:
@@ -468,7 +596,7 @@ def tick():
 
         if btc*price < DUST*price or btc < DUST:
             # FLAT (or only dust) — ask the active strategy for an entry; gate on recent edge
-            sig, reason = gen_signal(closes, vols, len(closes)-1, 0, 0.0, 0, p, STRATEGY)
+            sig, reason = gen_signal(closes, vols, len(closes)-1, 0, 0.0, 0, p, STRATEGY, sr)
             recent = closes[-120:] if len(closes) >= 120 else closes
             eg = backtest_closes(recent, STRATEGY, p)
             edge_ok = bool(eg and eg["ret"] > 0 and eg["trades"] >= 1)
@@ -497,13 +625,14 @@ def tick():
                 fb = last_buy(load_fills())
                 entry = float(fb["price"]) if fb else price
                 held = int((dt.datetime.now() - dt.datetime.fromisoformat(fb["t"])).total_seconds()/60/_interval_minutes()) if fb else 0
-                sig, reason = gen_signal(closes, vols, len(closes)-1, 1, entry, held, p, STRATEGY)
+                sig, reason = gen_signal(closes, vols, len(closes)-1, 1, entry, held, p, STRATEGY, sr)
                 if sig == "SELL":
                     sq = fmt_qty(btc)
                     o = signed("/order", {"symbol":SYMBOL,"side":"SELL","type":"MARKET","quantity":sq}, "POST")
                     if isinstance(o, dict) and o.get("orderId"):
                         log(f"SELL[{STRATEGY}] qty={sq} @ {price:.2f} ({reason}) -> {o['orderId']}")
                         record_fill("SELL", sq, price, o["orderId"])
+                        _record_exit(reason, price)
                     else: log(f"SELL FAILED {o}")
                 else:
                     log(f"HOLD (in pos) [{STRATEGY}] RSI={val:.1f} PnL={(price/entry-1)*100:+.1f}% held={held}c ({reason})")
@@ -709,6 +838,8 @@ def make_state():
         "equity_curve":equity,"portfolio":pa,
         "strategy": STRATEGY,
         "strategy_params": STRATEGY_PARAMS,
+        "strategies": {k: {"name": v["name"], "desc": v["desc"], "params": v["params"]} for k, v in STRATEGY_LIB.items()},
+        "last_exit": _last_exit,
         "position": _open_position(price, open_btc, fills),
         "tune": load_tune(),
         "creds_loaded": bool(creds().get("apiKey")),
@@ -722,13 +853,32 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Type",ctype)
         self.send_header("Content-Length",str(len(data)))
         self.send_header("Access-Control-Allow-Origin","*")
-        self.send_header("Access-Control-Allow-Methods","GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods","GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers","Content-Type")
         self.end_headers(); self.wfile.write(data)
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin","*")
-        self.send_header("Access-Control-Allow-Methods","GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods","GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers","Content-Type")
         self.end_headers()
+    def do_POST(self):
+        # only /api/strategy (switch active strategy) is accepted
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length) if length else b"{}"
+            body = json.loads(raw.decode()) if raw else {}
+        except Exception:
+            body = {}
+        if self.path in ("/api/strategy",):
+            key = body.get("strategy")
+            ok = set_strategy(key) if key else False
+            if ok:
+                self._send(200, {"ok": True, "strategy": key})
+            else:
+                self._send(400, {"ok": False, "error": f"unknown strategy '{key}'"})
+        else:
+            self._send(404, {"ok": False, "error": "not found"})
     def do_GET(self):
         if self.path in ("/api/state",):
             self._send(200, make_state())
@@ -824,6 +974,11 @@ class H(BaseHTTPRequestHandler):
                 self._send(200, compute_indicators(interval))
             except Exception as e:
                 self._send(500, {"error": str(e)})
+
+        elif self.path in ("/api/strategies",):
+            self._send(200, {"current": get_strategy_key(),
+                             "strategies": {k: {"name": v["name"], "desc": v["desc"], "params": v["params"]}
+                                            for k, v in STRATEGY_LIB.items()}})
 
         elif self.path in ("/", "/index.html"):
             fpath = os.path.join(HERE, "static", "index.html")

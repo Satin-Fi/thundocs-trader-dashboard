@@ -22,6 +22,16 @@ export const fetchFills = () => get<Fill[]>('/api/fills')
 export const fetchPrice = () => get<{ price: number; updated: string }>('/api/price')
 export const fetchKlines = (interval = '15m') => get<Klines>(`/api/klines?interval=${interval}`)
 export const fetchIndicators = (interval = '15m') => get<Indicators>(`/api/indicators?interval=${interval}`)
+export const fetchStrategies = () => get<{ current: string; strategies: Record<string, { name: string; desc: string; params: Record<string, number> }> }>('/api/strategies')
+export const setStrategy = async (key: string) => {
+  const res = await fetch(`${API_URL}/api/strategy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ strategy: key }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return (await res.json()) as { ok: boolean; strategy?: string; error?: string }
+}
 export const apiBase = API_URL
 
 export interface Indicators {

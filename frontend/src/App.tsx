@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchState, fetchFills, fetchKlines, fetchIndicators } from './api'
+import { fetchState, fetchFills, fetchKlines, fetchIndicators, fetchStrategies, setStrategy } from './api'
 import { useLivePrice } from './useBinancePrice'
 import type { State, Fill, Klines } from './types'
 import type { Indicators } from './api'
@@ -15,6 +15,8 @@ export default function App() {
   const [fills, setFills] = useState<Fill[]>([])
   const [klines, setKlines] = useState<Klines | null>(null)
   const [indicators, setIndicators] = useState<Indicators | null>(null)
+  const [strategies, setStrategies] = useState<{ current: string; list: Record<string, { name: string; desc: string; params: Record<string, number> }> }>({ current: 'reversion', list: {} })
+  const [switching, setSwitching] = useState(false)
   const [opts, setOpts] = useState<IndicatorOpts>({ ema20: true, ema50: true, breakout: false, rsi: true, macd: true, sr: true })
   const [tfState, setTf] = useState('15m')
   const [online, setOnline] = useState(true)
@@ -100,6 +102,11 @@ export default function App() {
       .catch(() => {})
     return () => { alive = false }
   }, [tfState])
+
+  // strategies list + current selection
+  useEffect(() => {
+    fetchStrategies().then(d => setStrategies({ current: d.current, list: d.strategies })).catch(() => {})
+  }, [])
 
   // indicators for the active interval (RSI/EMA/MACD/breakout + live signal)
   useEffect(() => {
@@ -265,17 +272,45 @@ export default function App() {
             </div>
             <div className="strat-row">
               <div className="strat-cell">
-                <span className="k">Active strategy</span>
-                <span className="v">{state.strategy}</span>
-              </div>
-              <div className="strat-cell">
-                <span className="k">Params</span>
-                <span className="v">{Object.entries(state.strategy_params).map(([k,v]) => `${k}=${v}`).join('  ')}</span>
-              </div>
-              <div className="strat-cell">
                 <span className="k">Current signal</span>
                 <span className="v">{indicators?.signal_reason ?? 'loading…'}</span>
               </div>
+              <div className="strat-cell">
+                <span className="k">Params ({strategies.current})</span>
+                <span className="v">{Object.entries(state.strategy_params).map(([k,v]) => `${k}=${v}`).join('  ')}</span>
+              </div>
+              <div className="strat-cell">
+                <span className="k">Last exit</span>
+                <span className={`v ${state.last_exit ? (state.last_exit.reason.startsWith('TP') ? 'pos' : state.last_exit.reason.startsWith('STOP') || state.last_exit.reason.startsWith('SL') ? 'neg' : '') : ''}`}>
+                  {state.last_exit ? `${state.last_exit.reason} @ ${state.last_exit.price.toLocaleString()}` : '—'}
+                </span>
+              </div>
+            </div>
+            <div className="strat-switch">
+              <span className="k">Switch strategy:</span>
+              <div className="strat-btns">
+                {Object.entries(strategies.list).map(([key, s]) => (
+                  <button
+                    key={key}
+                    className={strategies.current === key ? 'on' : ''}
+                    disabled={switching}
+                    title={s.desc}
+                    onClick={async () => {
+                      setSwitching(true)
+                      try {
+                        await setStrategy(key)
+                        setStrategies(s => ({ ...s, current: key }))
+                      } catch (e) { /* ignore */ }
+                      finally { setSwitching(false) }
+                    }}
+                  >
+                    {s.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="strat-desc">
+              {strategies.list[strategies.current]?.desc}
             </div>
           </div>
 

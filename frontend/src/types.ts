@@ -25,6 +25,7 @@ export interface State {
   }
   strategy: string
   strategy_params: Record<string, number>
+  last_exit: { reason: string; price: number; t: string } | null
   position: {
     side: string
     entry: number
