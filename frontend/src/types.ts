@@ -26,10 +26,11 @@ export interface State {
   rsi: { low: number; high: number }
   tune: {
     ts: string
-    current: { low: number; high: number; ret: number }
-    best: { low: number; high: number; metrics: { ret: number; win_rate: number; trades: number } }
+    method: string
+    current: { low: number; high: number; test_ret: number }
+    best: { low: number; high: number; train_ret: number; test_ret: number; metrics: { ret: number; win_rate: number; trades: number } }
     applied: boolean
-    candidates: { low: number; high: number; metrics: { ret: number; win_rate: number; trades: number } }[]
+    candidates: { low: number; high: number; train_ret: number; test_ret: number }[]
   } | null
   updated: string
 }

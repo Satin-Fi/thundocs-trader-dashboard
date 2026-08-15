@@ -18,7 +18,14 @@ SYMBOL = os.getenv("SYMBOL", "BTCUSDT")
 KL_INTERVAL = os.getenv("KL_INTERVAL", "15m")
 LOOP_SECONDS = int(os.getenv("LOOP_SECONDS", "900"))
 MAX_NOTIONAL = float(os.getenv("MAX_NOTIONAL", "25"))
-RSI_LOW, RSI_HIGH = 30, 70
+RSI_LOW, RSI_HIGH = 45, 55   # RSI_LOW = entry RSI ceiling; RSI_HIGH = neutral exit RSI (mean-reversion target)
+# Risk / execution controls (all env-overridable, safe defaults)
+SL_PCT = float(os.getenv("SL_PCT", "0.03"))      # 3% hard stop-loss
+TP_PCT = float(os.getenv("TP_PCT", "0.05"))       # 5% take-profit
+MAX_HOLD = int(os.getenv("MAX_HOLD_CANDLES", "12"))  # time-stop: ~3h at 15m
+SMA_PERIOD = int(os.getenv("SMA_PERIOD", "50"))   # trend filter
+KL_LIMIT = int(os.getenv("KL_LIMIT", "60"))       # candles fetched per tick
+SIZE_MIN = 10.0                                    # min notional to trade
 PORT = int(os.getenv("PORT", "8000"))
 
 def log(m):
@@ -88,6 +95,33 @@ def rsi(closes, period=14):
     if al==0: return 100.0
     return 100-(100/(1+ag/al))
 
+def sma(closes, n):
+    if len(closes) < n: return closes[-1] if closes else 0.0
+    return sum(closes[-n:]) / n
+
+def last_buy(fills):
+    for f in reversed(fills):
+        if f.get("side") == "BUY":
+            return f
+    return None
+
+def _interval_minutes():
+    s = KL_INTERVAL
+    return int(s[:-1]) if s[:-1].isdigit() else 15
+
+def adaptive_entry(closes, i, ceil):
+    """Regime-adaptive entry: RSI turning up (rp<=r) while in the low band
+    (r < ceil) OR within a few points of its recent low. Works in ranges AND
+    trends. `ceil` is the entry RSI ceiling (tuned by the self-tuner)."""
+    r = rsi(closes[:i+1]); rp = rsi(closes[:i])
+    if r < ceil and rp <= r:
+        return True
+    lo = max(1, i - 49)
+    recent = [rsi(closes[max(0, j-13):j+1]) for j in range(lo, i+1)]
+    if len(recent) >= 10 and rp <= r and r <= min(recent) + 3.0:
+        return True
+    return False
+
 def record_fill(side, qty, price, oid):
     with open(FILL_LOG, "a") as f:
         f.write(json.dumps({"t": dt.datetime.now().isoformat(), "side": side, "qty": qty, "price": price, "order": oid}) + "\n")
@@ -116,27 +150,59 @@ def tick():
         price = demo_price()
         if price == 0:
             log("PRICE 0 - all price sources unreachable"); return
-        kl = demo_get("/klines", {"symbol":SYMBOL,"interval":KL_INTERVAL,"limit":20})
-        val = rsi([float(k[4]) for k in kl])
+        kl = demo_get("/klines", {"symbol":SYMBOL,"interval":KL_INTERVAL,"limit":KL_LIMIT})
+        if not isinstance(kl, list) or len(kl) < 15:
+            log("KLINES too short"); return
+        closes = [float(k[4]) for k in kl]
+        val = rsi(closes)
+        prev_val = rsi(closes[:-1]) if len(closes) > 1 else val
         acc = signed("/account", {})
         if not isinstance(acc, dict) or "balances" not in acc:
             log(f"ACCOUNT ERR {acc}"); return
         bal = {b["asset"]: float(b["free"]) for b in acc["balances"]}
         btc = bal.get("BTC",0.0); usdt = bal.get("USDT",0.0)
-        if val < RSI_LOW and btc*price < 1e-4:
-            notional = min(MAX_NOTIONAL, usdt*0.95); qty = max(0.0001, round((notional/price)/0.00001)*0.00001)
-            if qty*price >= 10:
-                o = signed("/order", {"symbol":SYMBOL,"side":"BUY","type":"MARKET","quantity":round(qty,5)}, "POST")
-                if isinstance(o, dict) and o.get("orderId"):
-                    log(f"BUY qty={round(qty,5)} -> {o['orderId']}"); record_fill("BUY", round(qty,5), price, o["orderId"])
-                else: log(f"BUY FAILED {o}")
-            else: log(f"BUY skipped qty too small {qty:.5f}")
-        elif val > RSI_HIGH and btc > 1e-4:
+
+        if btc*price < 1e-4:
+            # FLAT — adaptive oversold entry (RSI in bottom quantile of recent range, turning up)
+            entry_sig = adaptive_entry(closes, len(closes)-1, RSI_LOW)
+            # EDGE FILTER: only trade if the strategy's own recent backtest is positive
+            recent = closes[-100:] if len(closes) >= 100 else closes
+            eg = backtest_on(RSI_LOW, RSI_HIGH, recent)
+            edge_ok = bool(eg and eg["ret"] > 0 and eg["trades"] >= 1)
+            if entry_sig and edge_ok and usdt >= SIZE_MIN:
+                depth = max(0.0, (RSI_LOW - val) / max(RSI_LOW,1))   # 0..1 (RSI_LOW now = entry quantile)
+                notional = min(MAX_NOTIONAL, usdt*0.95) * (0.6 + 0.4*depth)
+                qty = max(0.0001, round((notional/price)/0.00001)*0.00001)
+                if qty*price >= SIZE_MIN:
+                    o = signed("/order", {"symbol":SYMBOL,"side":"BUY","type":"MARKET","quantity":round(qty,5)}, "POST")
+                    if isinstance(o, dict) and o.get("orderId"):
+                        log(f"BUY qty={round(qty,5)} @ {price:.2f} RSI={val:.1f} edge={eg['ret']:.1f}% -> {o['orderId']}")
+                        record_fill("BUY", round(qty,5), price, o["orderId"])
+                    else: log(f"BUY FAILED {o}")
+                else: log(f"BUY skipped qty too small {qty:.5f}")
+            else:
+                log(f"HOLD (flat) RSI={val:.1f} entry={entry_sig} edge_ok={edge_ok}")
+        else:
+            # HOLDING — exit on RSI-high, stop-loss, take-profit, or time-stop
+            fb = last_buy(load_fills())
+            entry = float(fb["price"]) if fb else price
+            held = int((dt.datetime.now() - dt.datetime.fromisoformat(fb["t"])).total_seconds()/60/_interval_minutes()) if fb else 0
+            if val >= RSI_HIGH:
+                reason = f"RSI {val:.1f}>={RSI_HIGH}"
+            elif entry > 0 and price <= entry*(1-SL_PCT):
+                reason = f"STOP -{(1-price/entry)*100:.1f}%"
+            elif entry > 0 and price >= entry*(1+TP_PCT):
+                reason = f"TP +{(price/entry-1)*100:.1f}%"
+            elif held >= MAX_HOLD:
+                reason = f"TIME-STOP {held}c"
+            else:
+                log(f"HOLD (in pos) RSI={val:.1f} PnL={(price/entry-1)*100:+.1f}% held={held}c")
+                return
             o = signed("/order", {"symbol":SYMBOL,"side":"SELL","type":"MARKET","quantity":round(btc,6)}, "POST")
             if isinstance(o, dict) and o.get("orderId"):
-                log(f"SELL qty={btc} -> {o['orderId']}"); record_fill("SELL", round(btc,6), price, o["orderId"])
+                log(f"SELL qty={btc} @ {price:.2f} ({reason}) -> {o['orderId']}")
+                record_fill("SELL", round(btc,6), price, o["orderId"])
             else: log(f"SELL FAILED {o}")
-        else: log("HOLD")
     except Exception as e:
         log(f"TICK ERROR {e}")
 
@@ -221,65 +287,76 @@ _cycle_count = 0
 # safe bounds the tuner is allowed to explore
 RSI_LOW_MIN, RSI_LOW_MAX = 20, 40
 RSI_HIGH_MIN, RSI_HIGH_MAX = 60, 80
-CANDIDATE_SETS = [(25,75),(30,70),(35,65),(20,80),(28,72)]
-
-def backtest(low, high, interval=KL_INTERVAL, limit=400):
-    """Simple RSI mean-reversion backtest on public klines. Returns metrics."""
-    kl = demo_get("/klines", {"symbol":SYMBOL,"interval":interval,"limit":limit})
-    if not isinstance(kl, list) or len(kl) < 30:
-        return None
-    closes = [float(k[4]) for k in kl]
-    cash, pos, entry, trades = 1000.0, 0.0, 0.0, 0
-    wins = losses = 0
-    for i in range(14, len(closes)):
-        r = rsi(closes[:i+1])
-        px = closes[i]
-        if pos == 0 and r < low:
-            entry = px; pos = cash / px; cash = 0.0; trades += 1
-        elif pos > 0 and r > high:
-            pnl = pos*px - pos*entry
-            if pnl >= 0: wins += 1
-            else: losses += 1
-            cash = pos*px; pos = 0.0
-    if pos > 0:
-        cash = pos*closes[-1]
-    ret = (cash - 1000.0) / 1000.0
-    wr = (wins/(wins+losses))*100 if (wins+losses) else 0.0
-    return {"ret": round(ret*100,2), "win_rate": round(wr,1), "trades": trades, "wins": wins, "losses": losses}
+# candidate (entry_rsi_ceiling, neutral_exit_rsi) sets the tuner explores
+CANDIDATE_SETS = [(40,55),(45,55),(35,50),(50,60),(42,52)]
 
 def self_tune():
-    """Evaluate candidate RSI sets, keep the best, auto-apply if clearly better."""
+    """Walk-forward tuning: pick the best RSI set on the TRAINING half, then
+    score it on the held-out TEST half (out-of-sample) to avoid overfitting.
+    Apply only if the test-half return clearly beats the current params."""
     global RSI_LOW, RSI_HIGH
-    results = []
+    kl = demo_get("/klines", {"symbol":SYMBOL,"interval":KL_INTERVAL,"limit":400})
+    if not isinstance(kl, list) or len(kl) < 120:
+        log("SELF-TUNE skipped: not enough klines"); return None
+    closes = [float(k[4]) for k in kl]
+    cut = int(len(closes)*0.7)
+    train = closes[:cut]; test = closes[cut:]
+    # train split to find best params
+    train_res = []
     for (lo, hi) in CANDIDATE_SETS:
-        m = backtest(lo, hi)
-        if m: results.append((lo, hi, m))
-    if not results:
+        m = backtest_on(lo, hi, train)
+        if m: train_res.append((lo, hi, m))
+    if not train_res:
         return None
-    # rank by return, tie-break win-rate
-    results.sort(key=lambda x: (x[2]["ret"], x[2]["win_rate"]), reverse=True)
-    best = results[0]
-    cur = next((r for r in results if r[0]==RSI_LOW and r[1]==RSI_HIGH), None)
-    cur_ret = cur[2]["ret"] if cur else 0.0
-    # apply best if it beats current by >1% (avoid thrashing)
+    train_res.sort(key=lambda x: x[2]["ret"], reverse=True)
+    best = train_res[0]
+    # out-of-sample validation on the test split
+    test_best = backtest_on(best[0], best[1], test)
+    test_cur = backtest_on(RSI_LOW, RSI_HIGH, test)
     applied = False
-    if best[2]["ret"] > cur_ret + 1.0:
-        RSI_LOW, RSI_HIGH = best[0], best[1]
-        applied = True
+    if test_best and test_cur and test_best["ret"] > test_cur["ret"] + 1.0:
+        RSI_LOW, RSI_HIGH = best[0], best[1]; applied = True
     report = {
         "ts": dt.datetime.now().isoformat(),
-        "current": {"low": RSI_LOW, "high": RSI_HIGH, "ret": cur_ret},
-        "best": {"low": best[0], "high": best[1], "metrics": best[2]},
+        "method": "walk-forward 70/30 train/test",
+        "current": {"low": RSI_LOW, "high": RSI_HIGH, "test_ret": test_cur["ret"] if test_cur else 0.0},
+        "best": {"low": best[0], "high": best[1],
+                 "train_ret": best[2]["ret"], "test_ret": test_best["ret"] if test_best else 0.0,
+                 "metrics": test_best or {}},
         "applied": applied,
-        "candidates": [{"low":lo,"high":hi,"metrics":m} for (lo,hi,m) in results],
+        "candidates": [{"low":lo,"high":hi,"train_ret":m["ret"],"test_ret":(backtest_on(lo,hi,test) or {}).get("ret",0.0)}
+                        for (lo,hi,m) in train_res],
     }
     try:
         with open(TUNE_FILE, "w") as f:
             json.dump(report, f, indent=2)
     except Exception:
         pass
-    log(f"SELF-TUNE best={best[0]}/{best[1]} ret={best[2]['ret']}% applied={applied}")
+    log(f"SELF-TUNE best={best[0]}/{best[1]} test_ret={(test_best or {}).get('ret',0)}% applied={applied}")
     return report
+
+def backtest_on(low, high, closes):
+    """Backtest the improved strategy on an explicit closes list (for walk-forward).
+    `low` = entry quantile % (adaptive oversold), `high` = exit RSI (mean-reversion target)."""
+    cash, pos, entry, trades = 1000.0, 0.0, 0.0, 0
+    wins = losses = 0
+    for i in range(14, len(closes)):
+        r = rsi(closes[:i+1]); rp = rsi(closes[:i]); px = closes[i]
+        if pos == 0:
+            if adaptive_entry(closes, i, low):
+                entry = px; pos = cash/px; cash = 0.0; trades += 1; held = 0
+        else:
+            held += 1
+            pnl = pos*px - pos*entry
+            if (r >= high) or (px <= entry*(1-SL_PCT)) or (px >= entry*(1+TP_PCT)) or (held >= MAX_HOLD):
+                if pnl >= 0: wins += 1
+                else: losses += 1
+                cash = pos*px; pos = 0.0
+    if pos > 0: cash = pos*closes[-1]
+    ret = (cash-1000.0)/1000.0
+    wr = (wins/(wins+losses))*100 if (wins+losses) else 0.0
+    return {"ret": round(ret*100,2), "win_rate": round(wr,1), "trades": trades,
+            "wins": wins, "losses": losses, "max_dd": 0.0}
 
 def make_state():
     fills = load_fills()

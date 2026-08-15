@@ -120,7 +120,7 @@ export default function App() {
               <div className="head">
                 <div>
                   <h2>Strategy Self-Review</h2>
-                  <span className="hint">bot backtests RSI sets every ~2h and auto-tunes · {state.rsi.low}/{state.rsi.high} active</span>
+                  <span className="hint">walk-forward 70/30 · bot retunes every ~2h · {state.rsi.low}/{state.rsi.high} active · out-of-sample = honest score</span>
                 </div>
                 <span className={`badge ${state.tune.applied ? 'sell' : 'buy'}`}>{state.tune.applied ? 'tuned' : 'stable'}</span>
               </div>
@@ -128,8 +128,8 @@ export default function App() {
                 {state.tune.candidates.map((c, i) => (
                   <div key={i} className={`tune-card ${(c.low===state.tune!.best.low && c.high===state.tune!.best.high) ? 'best' : ''}`}>
                     <div className="tune-set">RSI {c.low}/{c.high}</div>
-                    <div className={`tune-ret ${(c.metrics.ret??0) >= 0 ? 'pos' : 'neg'}`}>{(c.metrics.ret??0) >= 0 ? '+' : ''}{(c.metrics.ret??0).toFixed(2)}%</div>
-                    <div className="tune-wr">win {c.metrics.win_rate??0}% · {c.metrics.trades??0} trades</div>
+                    <div className={`tune-ret ${(c.test_ret??0) >= 0 ? 'pos' : 'neg'}`}>{(c.test_ret??0) >= 0 ? '+' : ''}{(c.test_ret??0).toFixed(2)}%</div>
+                    <div className="tune-wr">out-of-sample · train {(c.train_ret??0).toFixed(1)}%</div>
                   </div>
                 ))}
               </div>
