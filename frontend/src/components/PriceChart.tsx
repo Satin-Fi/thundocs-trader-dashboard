@@ -1,30 +1,52 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { createChart, ColorType, type IChartApi, type ISeriesApi, type UTCTimestamp, type SeriesMarker, type Time, type IPriceLine } from 'lightweight-charts'
+import {
+  createChart, ColorType, LineStyle, type IChartApi, type ISeriesApi,
+  type UTCTimestamp, type SeriesMarker, type Time, type IPriceLine,
+  type LineData,
+} from 'lightweight-charts'
 import type { Kline, Fill } from '../types'
+import type { Indicators } from '../api'
+
+export interface IndicatorOpts {
+  ema20: boolean
+  ema50: boolean
+  breakout: boolean
+  rsi: boolean
+  macd: boolean
+}
 
 interface Props {
   klines: Kline[]
   fills: Fill[]
-  position: {
-    entry: number
-    stop_loss: number
-    take_profit: number
-  } | null
+  position: { entry: number; stop_loss: number; take_profit: number } | null
   livePrice: number
   interval: string
+  indicators: Indicators | null
+  opts: IndicatorOpts
 }
 
-export default function PriceChart({ klines, fills, position, livePrice, interval }: Props) {
+export default function PriceChart({ klines, fills, position, livePrice, interval, indicators, opts }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
   const volRef = useRef<ISeriesApi<'Histogram'> | null>(null)
-  const slLinesRef = useRef<IPriceLine[]>([])      // entry / SL / TP lines
+  const ema20Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const ema50Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const boUpRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const boLoRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const rsiChartRef = useRef<IChartApi | null>(null)
+  const rsiRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const macdChartRef = useRef<IChartApi | null>(null)
+  const macdHistRef = useRef<ISeriesApi<'Histogram'> | null>(null)
+  const macdLineRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const macdSigRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const slLinesRef = useRef<IPriceLine[]>([])
   const liveLineRef = useRef<IPriceLine | null>(null)
   const shownInterval = useRef<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
-  // create chart once, with explicit width
+  // create charts once
+
   useLayoutEffect(() => {
     const el = wrapRef.current
     if (!el) return
@@ -32,122 +54,146 @@ export default function PriceChart({ klines, fills, position, livePrice, interva
     try {
       const w = el.clientWidth || el.parentElement?.clientWidth || 800
       const chart = createChart(el, {
-        width: w,
-        height: 440,
-        layout: {
-          background: { type: ColorType.Solid, color: 'transparent' },
-          textColor: '#aeb4c0',
-          fontFamily: 'Inter, system-ui, sans-serif',
-        },
-        grid: {
-          vertLines: { color: 'rgba(255,255,255,0.05)' },
-          horzLines: { color: 'rgba(255,255,255,0.05)' },
-        },
+        width: w, height: 440,
+        layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#aeb4c0', fontFamily: 'Inter, system-ui, sans-serif' },
+        grid: { vertLines: { color: 'rgba(255,255,255,0.05)' }, horzLines: { color: 'rgba(255,255,255,0.05)' } },
         crosshair: { mode: 0 },
         rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)' },
         timeScale: { borderColor: 'rgba(255,255,255,0.08)', timeVisible: true, secondsVisible: false },
-        handleScale: true,
-        handleScroll: true,
+        handleScale: true, handleScroll: true,
       })
-      const candle = chart.addCandlestickSeries({
-        upColor: '#00d992', downColor: '#fb565b',
-        borderUpColor: '#00d992', borderDownColor: '#fb565b',
-        wickUpColor: '#00d992', wickDownColor: '#fb565b',
-      })
-      const vol = chart.addHistogramSeries({
-        priceFormat: { type: 'volume' },
-        priceScaleId: 'vol',
-      })
+      const candle = chart.addCandlestickSeries({ upColor: '#00d992', downColor: '#fb565b', borderUpColor: '#00d992', borderDownColor: '#fb565b', wickUpColor: '#00d992', wickDownColor: '#fb565b' })
+      const vol = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'vol' })
       try { chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } }) } catch {}
-      chartRef.current = chart
-      candleRef.current = candle
-      volRef.current = vol
+
+      // RSI sub-chart
+      const rsiWrap = document.createElement('div'); rsiWrap.className = 'subchart'; rsiWrap.style.height = '120px'
+      const rsiChart = createChart(rsiWrap, { width: w, height: 120, layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#aeb4c0' }, grid: { vertLines: { color: 'rgba(255,255,255,0.04)' }, horzLines: { color: 'rgba(255,255,255,0.04)' } }, rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)' }, timeScale: { borderColor: 'rgba(255,255,255,0.08)', timeVisible: true, secondsVisible: false }, handleScale: false, handleScroll: true })
+      const rsi = rsiChart.addLineSeries({ color: '#a78bfa', lineWidth: 2, priceFormat: { type: 'custom', formatter: (p: number) => p.toFixed(0) } })
+      // RSI 30/70 guides
+      rsi.createPriceLine({ price: 70, color: 'rgba(251,86,91,0.35)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: '70' })
+      rsi.createPriceLine({ price: 30, color: 'rgba(0,217,146,0.35)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: '30' })
+
+      // MACD sub-chart
+      const macdWrap = document.createElement('div'); macdWrap.className = 'subchart'; macdWrap.style.height = '120px'
+      const macdChart = createChart(macdWrap, { width: w, height: 120, layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#aeb4c0' }, grid: { vertLines: { color: 'rgba(255,255,255,0.04)' }, horzLines: { color: 'rgba(255,255,255,0.04)' } }, rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)' }, timeScale: { borderColor: 'rgba(255,255,255,0.08)', timeVisible: true, secondsVisible: false }, handleScale: false, handleScroll: true })
+      const macdHist = macdChart.addHistogramSeries({ priceFormat: { type: 'custom', formatter: (p: number) => p.toFixed(0) } })
+      const macdLine = macdChart.addLineSeries({ color: '#4ea8ff', lineWidth: 2 })
+      const macdSig = macdChart.addLineSeries({ color: '#facc15', lineWidth: 2 })
+
+      const subHost = document.getElementById('chart-subs') as HTMLElement | null
+      if (subHost) { subHost.innerHTML = ''; subHost.appendChild(rsiWrap); subHost.appendChild(macdWrap) }
+
+      chartRef.current = chart; candleRef.current = candle; volRef.current = vol
+      rsiChartRef.current = rsiChart; rsiRef.current = rsi
+      macdChartRef.current = macdChart; macdHistRef.current = macdHist; macdLineRef.current = macdLine; macdSigRef.current = macdSig
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
     }
   }, [])
 
-  // keep width in sync with container
+  // keep widths synced
   useLayoutEffect(() => {
     const el = wrapRef.current, chart = chartRef.current
     if (!el || !chart) return
-    const ro = new ResizeObserver(() => {
-      try { chart.applyOptions({ width: el.clientWidth || 800 }) } catch {}
-    })
-    ro.observe(el)
+    const sync = () => {
+      const w = el.clientWidth || 800
+      try { chart.applyOptions({ width: w }) } catch {}
+      try { rsiChartRef.current?.applyOptions({ width: w }) } catch {}
+      try { macdChartRef.current?.applyOptions({ width: w }) } catch {}
+    }
+    const ro = new ResizeObserver(sync); ro.observe(el); sync()
     return () => ro.disconnect()
   }, [])
 
-  // push candle/volume data + markers + entry/SL/TP lines when data or position changes
+  // candle/volume/trade data + SL/TP + fit on interval change
   useEffect(() => {
     const candle = candleRef.current, vol = volRef.current, chart = chartRef.current
     if (!candle || !vol || !chart) return
     setErr(null)
     try {
-      candle.setData(klines.map(k => ({
-        time: (k.t / 1000) as UTCTimestamp,
-        open: k.o, high: k.h, low: k.l, close: k.c,
-      })))
-      vol.setData(klines.map(k => ({
-        time: (k.t / 1000) as UTCTimestamp,
-        value: k.v,
-        color: k.c >= k.o ? 'rgba(0,217,146,0.4)' : 'rgba(251,86,91,0.4)',
-      })))
-
-      const markers: SeriesMarker<Time>[] = fills
-        .filter(f => (f.side === 'BUY' || f.side === 'SELL') && f.t)
-        .map(f => ({
-          time: (Date.parse(f.t) / 1000) as UTCTimestamp,
-          position: (f.side === 'BUY' ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
-          color: f.side === 'BUY' ? '#00d992' : '#fb565b',
-          shape: (f.side === 'BUY' ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown',
-          text: f.side === 'BUY' ? 'B' : 'S',
-        }))
+      const t = (k: Kline): UTCTimestamp => (k.t / 1000) as UTCTimestamp
+      candle.setData(klines.map(k => ({ time: t(k), open: k.o, high: k.h, low: k.l, close: k.c })))
+      vol.setData(klines.map(k => ({ time: t(k), value: k.v, color: k.c >= k.o ? 'rgba(0,217,146,0.4)' : 'rgba(251,86,91,0.4)' })))
+      const markers: SeriesMarker<Time>[] = fills.filter(f => (f.side === 'BUY' || f.side === 'SELL') && f.t).map(f => ({
+        time: (Date.parse(f.t) / 1000) as UTCTimestamp,
+        position: (f.side === 'BUY' ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
+        color: f.side === 'BUY' ? '#00d992' : '#fb565b',
+        shape: (f.side === 'BUY' ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown',
+        text: f.side === 'BUY' ? 'B' : 'S',
+      }))
       candle.setMarkers(markers)
-
-      // entry / SL / TP lines — ONLY when there is a real open position.
-      // When flat, draw nothing here (the white LIVE line still shows the price),
-      // so we never imply a trade entry that didn't happen.
       slLinesRef.current.forEach(l => { try { candle.removePriceLine(l) } catch {} })
       slLinesRef.current = []
       if (position) {
-        const addLine = (price: number, color: string, title: string) =>
-          slLinesRef.current.push(candle.createPriceLine({ price, color, lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title }))
-        addLine(position.entry, '#22d3ee', 'ENTRY')        // cyan
-        addLine(position.stop_loss, '#f43f5e', 'SL')       // rose/red
-        addLine(position.take_profit, '#facc15', 'TP')     // gold
+        const add = (price: number, color: string, title: string) => slLinesRef.current.push(candle.createPriceLine({ price, color, lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title }))
+        add(position.entry, '#22d3ee', 'ENTRY')
+        add(position.stop_loss, '#f43f5e', 'SL')
+        add(position.take_profit, '#facc15', 'TP')
       }
-
-      // ONLY re-fit the TIME axis when the interval changes — never on a live tick,
-      // so dragging/scrolling the chart does not snap back. (Price scale auto-fits,
-      // so SL/TP stay in view without us touching the time axis.)
-      if (shownInterval.current !== interval) {
-        chart.timeScale().fitContent()
-        shownInterval.current = interval
-      }
+      if (shownInterval.current !== interval) { chart.timeScale().fitContent(); shownInterval.current = interval }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
     }
   }, [klines, fills, position, interval])
 
-  // live price line — updates on every tick WITHOUT touching data or re-fitting
+  // indicators: overlays + sub-charts, driven by opts toggles
+  useEffect(() => {
+    const chart = chartRef.current
+    const candle = candleRef.current
+    const rsi = rsiRef.current
+    const mh = macdHistRef.current, ml = macdLineRef.current, ms = macdSigRef.current
+    if (!chart || !candle || !rsi || !mh || !ml || !ms || !indicators) return
+    try {
+      const times = indicators.times as UTCTimestamp[]
+      const toLine = (vals: (number | null)[]): LineData[] =>
+        vals.map((v, i) => ({ time: times[i], value: v as number })).filter(d => d.value != null)
+
+      // EMA overlays on the MAIN price chart
+      if (!ema20Ref.current) ema20Ref.current = chart.addLineSeries({ color: '#f59e0b', lineWidth: 2, priceLineVisible: false, lastValueVisible: false })
+      if (!ema50Ref.current) ema50Ref.current = chart.addLineSeries({ color: '#3b82f6', lineWidth: 2, priceLineVisible: false, lastValueVisible: false })
+      ema20Ref.current.applyOptions({ visible: opts.ema20 }); ema50Ref.current.applyOptions({ visible: opts.ema50 })
+      if (opts.ema20) ema20Ref.current.setData(toLine(indicators.ema20))
+      if (opts.ema50) ema50Ref.current.setData(toLine(indicators.ema50))
+
+      // Breakout bands on the main chart
+      if (!boUpRef.current) boUpRef.current = chart.addLineSeries({ color: 'rgba(34,211,238,0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false })
+      if (!boLoRef.current) boLoRef.current = chart.addLineSeries({ color: 'rgba(244,63,94,0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false })
+      boUpRef.current.applyOptions({ visible: opts.breakout }); boLoRef.current.applyOptions({ visible: opts.breakout })
+      if (opts.breakout) { boUpRef.current.setData(toLine(indicators.breakout_upper)); boLoRef.current.setData(toLine(indicators.breakout_lower)) }
+
+      // RSI sub-chart
+      if (opts.rsi) rsi.setData(toLine(indicators.rsi))
+      else rsi.setData([])
+
+      // MACD sub-chart
+      if (opts.macd) {
+        mh.setData(indicators.macd_hist.map((v: number, i: number) => ({ time: times[i], value: v, color: v >= 0 ? 'rgba(0,217,146,0.6)' : 'rgba(251,86,91,0.6)' })))
+        ml.setData(toLine(indicators.macd_line))
+        ms.setData(toLine(indicators.macd_signal))
+      } else {
+        mh.setData([]); ml.setData([]); ms.setData([])
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    }
+  }, [indicators, opts])
+
+  // live price line — every tick, no re-fit
   useEffect(() => {
     const candle = candleRef.current
     if (!candle) return
     try {
       if (liveLineRef.current) candle.removePriceLine(liveLineRef.current)
-      liveLineRef.current = candle.createPriceLine({
-        price: livePrice, color: '#e8edf5', lineWidth: 1, lineStyle: 3, axisLabelVisible: true, title: 'LIVE',
-      })
+      liveLineRef.current = candle.createPriceLine({ price: livePrice, color: '#e8edf5', lineWidth: 1, lineStyle: 3, axisLabelVisible: true, title: 'LIVE' })
     } catch {}
   }, [livePrice])
 
-  if (err) {
-    return (
-      <div ref={wrapRef} className="tv-chart">
-        <div className="chart-err">chart error: {err}</div>
-      </div>
-    )
-  }
-  return <div ref={wrapRef} className="tv-chart" />
+  if (err) return <div ref={wrapRef} className="tv-chart"><div className="chart-err">chart error: {err}</div></div>
+  return (
+    <div className="chart-wrap">
+      <div ref={wrapRef} className="tv-chart" />
+      <div id="chart-subs" className="chart-subs" />
+    </div>
+  )
 }

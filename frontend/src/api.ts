@@ -21,4 +21,22 @@ export const fetchState = () => get<State>('/api/state')
 export const fetchFills = () => get<Fill[]>('/api/fills')
 export const fetchPrice = () => get<{ price: number; updated: string }>('/api/price')
 export const fetchKlines = (interval = '15m') => get<Klines>(`/api/klines?interval=${interval}`)
+export const fetchIndicators = (interval = '15m') => get<Indicators>(`/api/indicators?interval=${interval}`)
 export const apiBase = API_URL
+
+export interface Indicators {
+  interval: string
+  times: number[]          // unix seconds, aligned with klines
+  rsi: (number | null)[]
+  ema20: number[]
+  ema50: number[]
+  macd_line: number[]
+  macd_signal: number[]
+  macd_hist: number[]
+  breakout_upper: (number | null)[]
+  breakout_lower: (number | null)[]
+  signal: 'BUY' | 'SELL' | 'HOLD'
+  signal_reason: string
+  strategy: string
+  strategy_params: Record<string, number>
+}

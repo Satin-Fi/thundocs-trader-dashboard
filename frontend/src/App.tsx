@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchState, fetchFills, fetchKlines } from './api'
+import { fetchState, fetchFills, fetchKlines, fetchIndicators } from './api'
 import { useLivePrice } from './useBinancePrice'
 import type { State, Fill, Klines } from './types'
+import type { Indicators } from './api'
+import type { IndicatorOpts } from './components/PriceChart'
 import Kpi from './components/Kpi'
 import EquityChart from './components/EquityChart'
 import PriceChart from './components/PriceChart'
@@ -12,6 +14,8 @@ export default function App() {
   const [state, setState] = useState<State | null>(null)
   const [fills, setFills] = useState<Fill[]>([])
   const [klines, setKlines] = useState<Klines | null>(null)
+  const [indicators, setIndicators] = useState<Indicators | null>(null)
+  const [opts, setOpts] = useState<IndicatorOpts>({ ema20: true, ema50: true, breakout: false, rsi: true, macd: true })
   const [tfState, setTf] = useState('15m')
   const [online, setOnline] = useState(true)
   const [err, setErr] = useState('')
@@ -93,6 +97,15 @@ export default function App() {
     if (cached) setKlines(cached)
     fetchKlines(tfState)
       .then(k => { if (alive) { cacheRef.current[tfState] = k; if (tfRef.current === tfState) setKlines(k) } })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [tfState])
+
+  // indicators for the active interval (RSI/EMA/MACD/breakout + live signal)
+  useEffect(() => {
+    let alive = true
+    fetchIndicators(tfState)
+      .then(d => { if (alive) setIndicators(d) })
       .catch(() => {})
     return () => { alive = false }
   }, [tfState])
@@ -213,16 +226,50 @@ export default function App() {
                     <button key={tf} className={tfState === tf ? 'active' : ''} onClick={() => setTf(tf)}>{tf}</button>
                   ))}
                 </div>
+                <div className="ind-menu">
+                  {([
+                    ['ema20', 'EMA 20'], ['ema50', 'EMA 50'], ['breakout', 'Breakout'],
+                    ['rsi', 'RSI'], ['macd', 'MACD'],
+                  ] as [keyof IndicatorOpts, string][]).map(([key, label]) => (
+                    <button key={key} className={opts[key] ? 'on' : ''} onClick={() => setOpts(o => ({ ...o, [key]: !o[key] }))}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
                 <span className="hint">
                   <span className="lg-buy">▲ buy</span> <span className="lg-sell">▼ sell</span> · <span style={{color:'#22d3ee'}}>entry</span> <span style={{color:'#f43f5e'}}>SL</span> <span style={{color:'#facc15'}}>TP</span> · {klines ? klines.candles.length : 0} candles
                 </span>
               </div>
             </div>
             {klines ? (
-              <PriceChart klines={klines.candles} fills={fills} position={state.position} livePrice={wsPrice ?? state?.price ?? 0} interval={tfState} />
+              <PriceChart klines={klines.candles} fills={fills} position={state.position} livePrice={wsPrice ?? state?.price ?? 0} interval={tfState} indicators={indicators} opts={opts} />
             ) : (
               <div className="empty">loading price chart…</div>
             )}
+          </div>
+
+          {/* STRATEGY + LIVE SIGNAL — what the bot is using and why it's holding/buying */}
+          <div className="panel rise d5b">
+            <div className="head">
+              <h2>Strategy &amp; Live Signal</h2>
+              <span className={`badge ${indicators?.signal === 'BUY' ? 'buy' : indicators?.signal === 'SELL' ? 'sell' : 'hold'}`}>
+                {indicators?.signal ?? '…'}
+              </span>
+            </div>
+            <div className="strat-row">
+              <div className="strat-cell">
+                <span className="k">Active strategy</span>
+                <span className="v">{state.strategy}</span>
+              </div>
+              <div className="strat-cell">
+                <span className="k">Params</span>
+                <span className="v">{Object.entries(state.strategy_params).map(([k,v]) => `${k}=${v}`).join('  ')}</span>
+              </div>
+              <div className="strat-cell">
+                <span className="k">Current signal</span>
+                <span className="v">{indicators?.signal_reason ?? 'loading…'}</span>
+              </div>
+            </div>
           </div>
 
           {state.tune && (

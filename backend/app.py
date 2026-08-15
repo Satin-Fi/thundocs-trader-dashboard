@@ -221,6 +221,111 @@ def vol_avg(vols, n):
     v = vols[-n:] if len(vols) >= n else vols
     return sum(v) / len(v) if v else 0.0
 
+def compute_indicators(interval=KL_INTERVAL, limit=300):
+    """Compute the indicator series the dashboard overlays on the chart, using
+    the SAME math the bot's strategy uses (rsi/ema/macd/breakout). Returns a
+    dict of aligned time-series (timestamps + values) plus the live signal."""
+    try:
+        kl = demo_get("/klines", {"symbol": SYMBOL, "interval": interval, "limit": limit})
+    except Exception:
+        kl = None
+    if not isinstance(kl, list) or len(kl) < 15:
+        return {"error": "klines unavailable", "interval": interval}
+    times = [int(k[0]) // 1000 for k in kl]
+    opens = [float(k[1]) for k in kl]
+    highs = [float(k[2]) for k in kl]
+    lows  = [float(k[3]) for k in kl]
+    closes = [float(k[4]) for k in kl]
+    vols = [float(k[5]) for k in kl]
+    n = len(closes)
+
+    # RSI (Wilder-ish, same as bot's rsi())
+    rsi_arr = []
+    g = [0.0]; l = [0.0]
+    for i in range(1, n):
+        d = closes[i] - closes[i - 1]
+        g.append(max(d, 0)); l.append(max(-d, 0))
+    for i in range(n):
+        if i < 14:
+            rsi_arr.append(None)
+        else:
+            ag = sum(g[i - 13:i + 1]) / 14.0
+            al = sum(l[i - 13:i + 1]) / 14.0
+            rsi_arr.append(100.0 if al == 0 else 100 - (100 / (1 + ag / al)))
+
+    # EMAs
+    def ema_series(vals, nn):
+        out = []
+        if not vals: return out
+        k = 2.0 / (nn + 1)
+        e = vals[0]
+        for p in vals:
+            e = p * k + e * (1 - k)
+            out.append(e)
+        return out
+    ema20 = ema_series(closes, 20)
+    ema50 = ema_series(closes, 50)
+
+    # MACD
+    def macd_series(vals, fast=12, slow=26, sig=9):
+        kf, ks = 2.0 / (fast + 1), 2.0 / (slow + 1)
+        ef = vals[0]; es = vals[0]
+        ef_s, es_s = [], []
+        for p in vals:
+            ef = p * kf + ef * (1 - kf); es = p * ks + es * (1 - ks)
+            ef_s.append(ef); es_s.append(es)
+        line = [a - b for a, b in zip(ef_s, es_s)]
+        sig_s = ema_series(line, sig)
+        hist = [a - b for a, b in zip(line, sig_s)]
+        return line, sig_s, hist
+    macd_line, macd_sig, macd_hist = macd_series(closes)
+
+    # Breakout bands (donchian-style, same lookback the bot uses)
+    lb = BREAKOUT_PARAMS.get("lookback", 20)
+    upper, lower = [], []
+    for i in range(n):
+        if i < lb:
+            upper.append(None); lower.append(None)
+        else:
+            upper.append(max(highs[i - lb:i])); lower.append(min(lows[i - lb:i]))
+
+    # Live signal from the active strategy (so the dashboard shows WHY HOLD/BUY/SELL)
+    sig = "HOLD"; reason = ""
+    try:
+        s, r = gen_signal(closes, vols, n - 1, (1 if btc_open_for_signal() > DUST else 0),
+                          closes[-1], 0, STRATEGY_PARAMS, STRATEGY)
+        sig, reason = s, r
+    except Exception as e:
+        sig, reason = "HOLD", f"err {e}"
+
+    return {
+        "interval": interval,
+        "times": times,
+        "rsi": rsi_arr,
+        "ema20": ema20,
+        "ema50": ema50,
+        "macd_line": macd_line,
+        "macd_signal": macd_sig,
+        "macd_hist": macd_hist,
+        "breakout_upper": upper,
+        "breakout_lower": lower,
+        "signal": sig,
+        "signal_reason": reason,
+        "strategy": STRATEGY,
+        "strategy_params": STRATEGY_PARAMS,
+    }
+
+def btc_open_for_signal():
+    try:
+        acc = signed("/account", {})
+        if isinstance(acc, dict):
+            for b in acc.get("balances", []):
+                if b["asset"] == "BTC":
+                    return float(b["free"])
+    except Exception:
+        pass
+    return 0.0
+
 # --- Strategy state (selected + tuned by the self-tuner) ---
 STRATEGY = os.getenv("STRATEGY", "reversion")   # "reversion" | "breakout"
 STRATEGY_PARAMS = {"entry_ceil": 45, "exit_rsi": 55}   # reversion defaults
@@ -655,6 +760,17 @@ class H(BaseHTTPRequestHandler):
                     candles = [{"t": k[0], "o": float(k[1]), "h": float(k[2]),
                                 "l": float(k[3]), "c": float(k[4]), "v": float(k[5])} for k in kl]
                     self._send(200, {"symbol": SYMBOL, "interval": interval, "price": demo_price(), "candles": candles})
+            except Exception as e:
+                self._send(500, {"error": str(e)})
+
+        elif self.path.startswith("/api/indicators"):
+            try:
+                q = self.path.split("?", 1)[1] if "?" in self.path else ""
+                params = dict(p.split("=", 1) for p in q.split("&") if "=" in p)
+                interval = params.get("interval", KL_INTERVAL)
+                if interval not in ("1m","3m","5m","15m","30m","1h","2h","4h","6h","12h","1d","3d","1w"):
+                    interval = KL_INTERVAL
+                self._send(200, compute_indicators(interval))
             except Exception as e:
                 self._send(500, {"error": str(e)})
 
