@@ -565,13 +565,24 @@ class H(BaseHTTPRequestHandler):
             self._send(200, rep or load_tune() or {"status": "no data"})
         elif self.path.startswith("/api/klines"):
             try:
-                kl = demo_get("/klines", {"symbol": SYMBOL, "interval": KL_INTERVAL, "limit": 120})
+                # allow ?interval=1h / ?limit=300 overrides (validated)
+                q = self.path.split("?", 1)[1] if "?" in self.path else ""
+                params = dict(p.split("=", 1) for p in q.split("&") if "=" in p)
+                interval = params.get("interval", KL_INTERVAL)
+                try:
+                    limit = int(params.get("limit", "300"))
+                except ValueError:
+                    limit = 300
+                limit = max(50, min(1000, limit))
+                if interval not in ("1m","3m","5m","15m","30m","1h","2h","4h","6h","12h","1d","3d","1w"):
+                    interval = KL_INTERVAL
+                kl = demo_get("/klines", {"symbol": SYMBOL, "interval": interval, "limit": limit})
                 if not isinstance(kl, list):
                     self._send(502, {"error": "klines unavailable"})
                 else:
                     candles = [{"t": k[0], "o": float(k[1]), "h": float(k[2]),
                                 "l": float(k[3]), "c": float(k[4]), "v": float(k[5])} for k in kl]
-                    self._send(200, {"symbol": SYMBOL, "interval": KL_INTERVAL, "price": demo_price(), "candles": candles})
+                    self._send(200, {"symbol": SYMBOL, "interval": interval, "price": demo_price(), "candles": candles})
             except Exception as e:
                 self._send(500, {"error": str(e)})
 

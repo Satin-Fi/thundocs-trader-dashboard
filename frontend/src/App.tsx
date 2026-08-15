@@ -10,6 +10,7 @@ export default function App() {
   const [state, setState] = useState<State | null>(null)
   const [fills, setFills] = useState<Fill[]>([])
   const [klines, setKlines] = useState<Klines | null>(null)
+  const [tfState, setTf] = useState('15m')
   const [online, setOnline] = useState(true)
   const [err, setErr] = useState('')
   const priceRef = useRef<HTMLSpanElement>(null)
@@ -19,7 +20,7 @@ export default function App() {
     let alive = true
     const poll = async () => {
       try {
-        const [s, f, k] = await Promise.all([fetchState(), fetchFills(), fetchKlines()])
+        const [s, f, k] = await Promise.all([fetchState(), fetchFills(), fetchKlines(tfState)])
         if (!alive) return
         if (priceRef.current && prevPrice.current) {
           const up = s.price > prevPrice.current
@@ -145,13 +146,20 @@ export default function App() {
             </div>
           )}
 
-          {/* PRICE CHART — the coin you're trading */}
+          {/* PRICE CHART — the coin you're trading (TradingView engine) */}
           <div className="panel rise d45">
             <div className="head">
-              <h2>{state.symbol} · Price ({klines?.interval ?? '15m'})</h2>
-              <span className="hint">
-                <span className="lg-buy">▲ buy</span> <span className="lg-sell">▼ sell</span> · <span style={{color:'var(--accent)'}}>— entry</span> <span style={{color:'var(--neg)'}}>— SL</span> <span style={{color:'var(--pos)'}}>— TP</span> · hover for OHLC · {klines ? klines.candles.length : 0} candles
-              </span>
+              <h2>{state.symbol} · Price</h2>
+              <div className="chart-tools">
+                <div className="tf-switch">
+                  {['15m', '1h', '4h', '1d'].map(tf => (
+                    <button key={tf} className={tfState === tf ? 'active' : ''} onClick={() => setTf(tf)}>{tf}</button>
+                  ))}
+                </div>
+                <span className="hint">
+                  <span className="lg-buy">▲ buy</span> <span className="lg-sell">▼ sell</span> · <span style={{color:'var(--accent)'}}>entry</span> <span style={{color:'var(--neg)'}}>SL</span> <span style={{color:'var(--pos)'}}>TP</span> · {klines ? klines.candles.length : 0} candles
+                </span>
+              </div>
             </div>
             {klines ? (
               <PriceChart klines={klines.candles} fills={fills} position={state.position} livePrice={state.price} />
