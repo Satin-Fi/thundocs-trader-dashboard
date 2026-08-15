@@ -31,6 +31,32 @@ PORT = int(os.getenv("PORT", "8000"))
 def log(m):
     print(f"{dt.datetime.now().isoformat()} | {m}", flush=True)
 
+# Cached symbol lot filter (fetched once) so we can snap order qty to step size
+# and enforce minQty — prevents Binance -1013 "Invalid quantity" rejections.
+_LOT_STEP = None
+def lot_step():
+    global _LOT_STEP
+    if _LOT_STEP is not None:
+        return _LOT_STEP
+    try:
+        ei = demo_get("/exchangeInfo", {"symbol": SYMBOL})
+        if isinstance(ei, dict) and ei.get("symbols"):
+            for f in ei["symbols"][0]["filters"]:
+                if f["filterType"] == "LOT_SIZE":
+                    _LOT_STEP = float(f["stepSize"]) or 1e-5
+                    return _LOT_STEP
+    except Exception:
+        pass
+    _LOT_STEP = 1e-5
+    return _LOT_STEP
+
+def fmt_qty(qty):
+    """Snap a desired quantity DOWN to the lot step size and enforce minQty."""
+    step = lot_step()
+    q = max(step, (qty // step) * step)
+    # trim to 8 decimals to avoid float noise
+    return round(q, 8)
+
 def creds():
     # Prefer env vars (Render/deploy), fall back to local keyfile
     key = os.getenv("THUNDOC_BINANCE_KEY")
@@ -77,9 +103,15 @@ def signed(path, params, method="GET"):
     params["timestamp"] = int(time.time()*1000); params["recvWindow"] = 5000
     q = "&".join(f"{k}={v}" for k, v in params.items())
     sig = hmac.new(c["secretKey"].encode(), q.encode(), hashlib.sha256).hexdigest()
-    url = f"{BASE}/v3{path}?{q}&signature={sig}"
+    url = f"{BASE}/v3{path}"
+    if method == "POST":
+        # Binance requires POST params in the request BODY (not the query string).
+        # The signature must cover the body params.
+        body = f"{q}&signature={sig}".encode()
+        req = urllib.request.Request(url, data=body, headers={"X-MBX-APIKEY": c["apiKey"]}, method="POST")
+    else:
+        req = urllib.request.Request(f"{url}?{q}&signature={sig}", headers={"X-MBX-APIKEY": c["apiKey"]})
     try:
-        req = urllib.request.Request(url, headers={"X-MBX-APIKEY": c["apiKey"]})
         with urllib.request.urlopen(req, timeout=10) as r:
             return json.loads(r.read().decode())
     except Exception as e:
@@ -244,14 +276,18 @@ def tick():
             edge_ok = bool(eg and eg["ret"] > 0 and eg["trades"] >= 1)
             if sig == "BUY" and edge_ok and usdt >= SIZE_MIN:
                 notional = min(MAX_NOTIONAL, usdt*0.95)
-                qty = max(0.0001, round((notional/price)/0.00001)*0.00001)
-                if qty*price >= SIZE_MIN:
-                    o = signed("/order", {"symbol":SYMBOL,"side":"BUY","type":"MARKET","quantity":round(qty,5)}, "POST")
-                    if isinstance(o, dict) and o.get("orderId"):
-                        log(f"BUY[{STRATEGY}] qty={round(qty,5)} @ {price:.2f} ({reason}) edge={eg['ret']:.1f}% -> {o['orderId']}")
-                        record_fill("BUY", round(qty,5), price, o["orderId"])
-                    else: log(f"BUY FAILED {o}")
-                else: log(f"BUY skipped qty too small {qty:.5f}")
+                # MARKET BUY by quote: Binance computes qty from USDT spent.
+                # Avoids manual qty rounding that triggered Binance -1013.
+                o = signed("/order", {"symbol":SYMBOL,"side":"BUY","type":"MARKET",
+                                      "quoteOrderQty": round(notional, 2)}, "POST")
+                if isinstance(o, dict) and o.get("orderId"):
+                    # derive executed qty/price from the fill for the ledger
+                    ex = (o.get("fills") or [{}])[0]
+                    qty = float(ex.get("qty", 0)); fill_px = float(ex.get("price", price))
+                    bqty = fmt_qty(qty) if qty > 0 else fmt_qty(notional/price)
+                    log(f"BUY[{STRATEGY}] qty={bqty} @ {fill_px:.2f} ({reason}) edge={eg['ret']:.1f}% -> {o['orderId']}")
+                    record_fill("BUY", bqty, fill_px, o["orderId"])
+                else: log(f"BUY FAILED {o}")
             else:
                 log(f"HOLD (flat) [{STRATEGY}] sig={sig} edge_ok={edge_ok} ({reason})")
         else:
@@ -261,10 +297,11 @@ def tick():
             held = int((dt.datetime.now() - dt.datetime.fromisoformat(fb["t"])).total_seconds()/60/_interval_minutes()) if fb else 0
             sig, reason = gen_signal(closes, vols, len(closes)-1, 1, entry, held, p, STRATEGY)
             if sig == "SELL":
-                o = signed("/order", {"symbol":SYMBOL,"side":"SELL","type":"MARKET","quantity":round(btc,6)}, "POST")
+                sq = fmt_qty(btc)
+                o = signed("/order", {"symbol":SYMBOL,"side":"SELL","type":"MARKET","quantity":sq}, "POST")
                 if isinstance(o, dict) and o.get("orderId"):
-                    log(f"SELL[{STRATEGY}] qty={btc} @ {price:.2f} ({reason}) -> {o['orderId']}")
-                    record_fill("SELL", round(btc,6), price, o["orderId"])
+                    log(f"SELL[{STRATEGY}] qty={sq} @ {price:.2f} ({reason}) -> {o['orderId']}")
+                    record_fill("SELL", sq, price, o["orderId"])
                 else: log(f"SELL FAILED {o}")
             else:
                 log(f"HOLD (in pos) [{STRATEGY}] RSI={val:.1f} PnL={(price/entry-1)*100:+.1f}% held={held}c ({reason})")
