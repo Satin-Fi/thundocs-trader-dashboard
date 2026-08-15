@@ -1,11 +1,8 @@
 import type { State, Fill } from './types'
 
-// In production Vite bakes VITE_API_URL from .env.production (the desktop
-// tunnel). If unset, fall back to the live tunnel so the deployed dashboard
-// still works. Set VITE_API_URL to a stable server URL to override.
-const FALLBACK_API = 'https://mixed-days-robertson-whereas.trycloudflare.com'
-const ENV_API: string = (import.meta.env.VITE_API_URL as string) || ''
-const API_URL: string = (ENV_API || FALLBACK_API).replace(/\/$/, '')
+// VITE_API_URL is baked into the build via vite.config.ts define (falls back to
+// the desktop tunnel). Set VITE_API_URL at Vercel build time to override.
+const API_URL: string = (import.meta.env.VITE_API_URL as string || '').replace(/\/$/, '')
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${API_URL}${path}`)
