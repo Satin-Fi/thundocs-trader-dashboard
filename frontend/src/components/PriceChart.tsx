@@ -54,8 +54,8 @@ export default function PriceChart({ klines, fills, position, livePrice }: Props
       const vol = chart.addHistogramSeries({
         priceFormat: { type: 'volume' },
         priceScaleId: 'vol',
+        priceScale: { scaleMargins: { top: 0.82, bottom: 0 } },
       })
-      chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } })
       chartRef.current = chart
       candleRef.current = candle
       volRef.current = vol
