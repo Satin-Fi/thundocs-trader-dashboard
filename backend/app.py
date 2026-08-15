@@ -122,6 +122,79 @@ def adaptive_entry(closes, i, ceil):
         return True
     return False
 
+def ema(closes, n):
+    if not closes: return 0.0
+    k = 2.0 / (n + 1)
+    e = closes[0]
+    for p in closes[1:]:
+        e = p * k + e * (1 - k)
+    return e
+
+def macd(closes, fast=12, slow=26, sig=9):
+    """Returns (macd_line, signal_line, histogram) at the latest bar."""
+    if len(closes) < slow + sig:
+        return (0.0, 0.0, 0.0)
+    kf, ks = 2.0/(fast+1), 2.0/(slow+1)
+    ef = es = closes[0]; ef_s, es_s = [], []
+    for p in closes:
+        ef = p*kf + ef*(1-kf); es = p*ks + es*(1-ks)
+        ef_s.append(ef); es_s.append(es)
+    line = [a - b for a, b in zip(ef_s, es_s)]
+    signal = ema(line, sig)
+    return (line[-1], signal, line[-1] - signal)
+
+def vol_avg(vols, n):
+    v = vols[-n:] if len(vols) >= n else vols
+    return sum(v) / len(v) if v else 0.0
+
+# --- Strategy state (selected + tuned by the self-tuner) ---
+STRATEGY = os.getenv("STRATEGY", "reversion")   # "reversion" | "breakout"
+STRATEGY_PARAMS = {"entry_ceil": 45, "exit_rsi": 55}   # reversion defaults
+# breakout defaults kept here for reference / when STRATEGY switches
+BREAKOUT_PARAMS = {"lookback": 20, "vol_mult": 1.5}
+
+def gen_signal(closes, vols, i, position, entry, held, p, strategy):
+    """Unified entry/exit signal for a given strategy.
+    Returns ("BUY"|"SELL"|"HOLD", reason). Shared SL/TP/time-stop on exits."""
+    px = closes[i]
+    if position == 0:
+        if strategy == "reversion":
+            r = rsi(closes[:i+1]); rp = rsi(closes[:i])
+            if r < p["entry_ceil"] and rp <= r:
+                return ("BUY", f"RSI {r:.0f} turn-up")
+            lo = max(1, i-49)
+            recent = [rsi(closes[max(0, j-13):j+1]) for j in range(lo, i+1)]
+            if len(recent) >= 10 and rp <= r and r <= min(recent) + 3.0:
+                return ("BUY", f"RSI near-low {r:.0f}")
+            return ("HOLD", f"RSI {rsi(closes[:i+1]):.0f}")
+        else:  # breakout / momentum
+            lb = p.get("lookback", 20)
+            if i < lb:
+                return ("HOLD", "warmup")
+            hi = max(closes[i-lb:i]); mh, ms, mhst = macd(closes[:i+1])
+            mhst_prev = macd(closes[:i])[2]
+            vol_ok = (vols[i] > vol_avg(vols, lb) * p.get("vol_mult", 1.5)) if i < len(vols) else True
+            if px > hi and mhst > 0 and mhst >= mhst_prev and vol_ok:
+                return ("BUY", f"breakout>{hi:.0f} vol")
+            return ("HOLD", "no breakout")
+    else:  # holding -> exit logic
+        if px <= entry * (1 - SL_PCT):
+            return ("SELL", f"STOP -{(1-px/entry)*100:.1f}%")
+        if px >= entry * (1 + TP_PCT):
+            return ("SELL", f"TP +{(px/entry-1)*100:.1f}%")
+        if held >= MAX_HOLD:
+            return ("SELL", f"TIME-STOP {held}c")
+        if strategy == "reversion":
+            if rsi(closes[:i+1]) >= p["exit_rsi"]:
+                return ("SELL", f"RSI>={p['exit_rsi']}")
+        else:
+            lb = p.get("lookback", 20)
+            if i >= lb and px < min(closes[i-lb:i]):
+                return ("SELL", "breakdown")
+            if macd(closes[:i+1])[2] < 0:
+                return ("SELL", "MACD neg")
+        return ("HOLD", f"hold {(px/entry-1)*100:+.1f}%")
+
 def record_fill(side, qty, price, oid):
     with open(FILL_LOG, "a") as f:
         f.write(json.dumps({"t": dt.datetime.now().isoformat(), "side": side, "qty": qty, "price": price, "order": oid}) + "\n")
@@ -154,55 +227,47 @@ def tick():
         if not isinstance(kl, list) or len(kl) < 15:
             log("KLINES too short"); return
         closes = [float(k[4]) for k in kl]
+        vols = [float(k[5]) for k in kl]
         val = rsi(closes)
-        prev_val = rsi(closes[:-1]) if len(closes) > 1 else val
         acc = signed("/account", {})
         if not isinstance(acc, dict) or "balances" not in acc:
             log(f"ACCOUNT ERR {acc}"); return
         bal = {b["asset"]: float(b["free"]) for b in acc["balances"]}
         btc = bal.get("BTC",0.0); usdt = bal.get("USDT",0.0)
+        p = STRATEGY_PARAMS
 
         if btc*price < 1e-4:
-            # FLAT — adaptive oversold entry (RSI in bottom quantile of recent range, turning up)
-            entry_sig = adaptive_entry(closes, len(closes)-1, RSI_LOW)
-            # EDGE FILTER: only trade if the strategy's own recent backtest is positive
-            recent = closes[-100:] if len(closes) >= 100 else closes
-            eg = backtest_on(RSI_LOW, RSI_HIGH, recent)
+            # FLAT — ask the active strategy for an entry; gate on recent edge
+            sig, reason = gen_signal(closes, vols, len(closes)-1, 0, 0.0, 0, p, STRATEGY)
+            recent = closes[-120:] if len(closes) >= 120 else closes
+            eg = backtest_closes(recent, STRATEGY, p)
             edge_ok = bool(eg and eg["ret"] > 0 and eg["trades"] >= 1)
-            if entry_sig and edge_ok and usdt >= SIZE_MIN:
-                depth = max(0.0, (RSI_LOW - val) / max(RSI_LOW,1))   # 0..1 (RSI_LOW now = entry quantile)
-                notional = min(MAX_NOTIONAL, usdt*0.95) * (0.6 + 0.4*depth)
+            if sig == "BUY" and edge_ok and usdt >= SIZE_MIN:
+                notional = min(MAX_NOTIONAL, usdt*0.95)
                 qty = max(0.0001, round((notional/price)/0.00001)*0.00001)
                 if qty*price >= SIZE_MIN:
                     o = signed("/order", {"symbol":SYMBOL,"side":"BUY","type":"MARKET","quantity":round(qty,5)}, "POST")
                     if isinstance(o, dict) and o.get("orderId"):
-                        log(f"BUY qty={round(qty,5)} @ {price:.2f} RSI={val:.1f} edge={eg['ret']:.1f}% -> {o['orderId']}")
+                        log(f"BUY[{STRATEGY}] qty={round(qty,5)} @ {price:.2f} ({reason}) edge={eg['ret']:.1f}% -> {o['orderId']}")
                         record_fill("BUY", round(qty,5), price, o["orderId"])
                     else: log(f"BUY FAILED {o}")
                 else: log(f"BUY skipped qty too small {qty:.5f}")
             else:
-                log(f"HOLD (flat) RSI={val:.1f} entry={entry_sig} edge_ok={edge_ok}")
+                log(f"HOLD (flat) [{STRATEGY}] sig={sig} edge_ok={edge_ok} ({reason})")
         else:
-            # HOLDING — exit on RSI-high, stop-loss, take-profit, or time-stop
+            # HOLDING — exit via gen_signal (SL/TP/time-stop + strategy exit)
             fb = last_buy(load_fills())
             entry = float(fb["price"]) if fb else price
             held = int((dt.datetime.now() - dt.datetime.fromisoformat(fb["t"])).total_seconds()/60/_interval_minutes()) if fb else 0
-            if val >= RSI_HIGH:
-                reason = f"RSI {val:.1f}>={RSI_HIGH}"
-            elif entry > 0 and price <= entry*(1-SL_PCT):
-                reason = f"STOP -{(1-price/entry)*100:.1f}%"
-            elif entry > 0 and price >= entry*(1+TP_PCT):
-                reason = f"TP +{(price/entry-1)*100:.1f}%"
-            elif held >= MAX_HOLD:
-                reason = f"TIME-STOP {held}c"
+            sig, reason = gen_signal(closes, vols, len(closes)-1, 1, entry, held, p, STRATEGY)
+            if sig == "SELL":
+                o = signed("/order", {"symbol":SYMBOL,"side":"SELL","type":"MARKET","quantity":round(btc,6)}, "POST")
+                if isinstance(o, dict) and o.get("orderId"):
+                    log(f"SELL[{STRATEGY}] qty={btc} @ {price:.2f} ({reason}) -> {o['orderId']}")
+                    record_fill("SELL", round(btc,6), price, o["orderId"])
+                else: log(f"SELL FAILED {o}")
             else:
-                log(f"HOLD (in pos) RSI={val:.1f} PnL={(price/entry-1)*100:+.1f}% held={held}c")
-                return
-            o = signed("/order", {"symbol":SYMBOL,"side":"SELL","type":"MARKET","quantity":round(btc,6)}, "POST")
-            if isinstance(o, dict) and o.get("orderId"):
-                log(f"SELL qty={btc} @ {price:.2f} ({reason}) -> {o['orderId']}")
-                record_fill("SELL", round(btc,6), price, o["orderId"])
-            else: log(f"SELL FAILED {o}")
+                log(f"HOLD (in pos) [{STRATEGY}] RSI={val:.1f} PnL={(price/entry-1)*100:+.1f}% held={held}c ({reason})")
     except Exception as e:
         log(f"TICK ERROR {e}")
 
@@ -277,86 +342,99 @@ def portfolio_analytics(fills, price):
     }
 
 # ---------------------------------------------------------------------------
-# Self-improvement: periodically backtest the strategy over recent market data
-# and auto-tune RSI thresholds within safe bounds. The bot "learns" by picking
-# the parameter set with the best backtested return + win-rate.
+# Self-improvement: evaluate BOTH strategy classes (reversion + breakout) over
+# recent data with walk-forward (train 70% / test 30% out-of-sample), then switch
+# the active strategy+params to the best out-of-sample performer. Avoids
+# overfitting and lets the bot adapt to regime (choppy -> reversion, trending -> breakout).
 # ---------------------------------------------------------------------------
 TUNE_FILE = os.path.join(HERE, "tune_report.json")
 TUNE_CYCLE_EVERY = 8          # run self_tune() every N ticks (~2h at 15m)
 _cycle_count = 0
-# safe bounds the tuner is allowed to explore
-RSI_LOW_MIN, RSI_LOW_MAX = 20, 40
-RSI_HIGH_MIN, RSI_HIGH_MAX = 60, 80
-# candidate (entry_rsi_ceiling, neutral_exit_rsi) sets the tuner explores
-CANDIDATE_SETS = [(40,55),(45,55),(35,50),(50,60),(42,52)]
+
+# candidate parameter sets per strategy the tuner explores
+REV_CANDIDATES = [
+    {"entry_ceil": 40, "exit_rsi": 55},
+    {"entry_ceil": 45, "exit_rsi": 55},
+    {"entry_ceil": 35, "exit_rsi": 50},
+    {"entry_ceil": 50, "exit_rsi": 60},
+    {"entry_ceil": 42, "exit_rsi": 52},
+]
+BRK_CANDIDATES = [
+    {"lookback": 15, "vol_mult": 1.5},
+    {"lookback": 20, "vol_mult": 1.5},
+    {"lookback": 20, "vol_mult": 2.0},
+    {"lookback": 25, "vol_mult": 1.3},
+    {"lookback": 30, "vol_mult": 1.8},
+]
+STRATEGIES = {"reversion": REV_CANDIDATES, "breakout": BRK_CANDIDATES}
+
+def backtest_closes(closes, strategy, params, vols=None):
+    """Backtest a strategy+params over an explicit closes list (walk-forward)."""
+    if vols is None:
+        vols = [1.0] * len(closes)
+    cash, pos, entry, trades = 1000.0, 0.0, 0.0, 0
+    wins = losses = 0
+    for i in range(14, len(closes)):
+        sig, _ = gen_signal(closes, vols, i, (1 if pos > 0 else 0), entry, (0 if pos == 0 else trades), params, strategy)
+        px = closes[i]
+        if pos == 0 and sig == "BUY":
+            entry = px; pos = cash/px; cash = 0.0; trades += 1
+        elif pos > 0 and sig == "SELL":
+            pnl = pos*px - pos*entry
+            if pnl >= 0: wins += 1
+            else: losses += 1
+            cash = pos*px; pos = 0.0
+    if pos > 0: cash = pos*closes[-1]
+    ret = (cash-1000.0)/1000.0
+    wr = (wins/(wins+losses))*100 if (wins+losses) else 0.0
+    return {"ret": round(ret*100,2), "win_rate": round(wr,1), "trades": trades,
+            "wins": wins, "losses": losses, "max_dd": 0.0}
 
 def self_tune():
-    """Walk-forward tuning: pick the best RSI set on the TRAINING half, then
-    score it on the held-out TEST half (out-of-sample) to avoid overfitting.
-    Apply only if the test-half return clearly beats the current params."""
-    global RSI_LOW, RSI_HIGH
-    kl = demo_get("/klines", {"symbol":SYMBOL,"interval":KL_INTERVAL,"limit":400})
-    if not isinstance(kl, list) or len(kl) < 120:
+    """Walk-forward: for EACH strategy, pick best params on the training 70%,
+    score out-of-sample on the test 30%. Switch active strategy to the best OOS."""
+    global STRATEGY, STRATEGY_PARAMS
+    kl = demo_get("/klines", {"symbol":SYMBOL,"interval":KL_INTERVAL,"limit":500})
+    if not isinstance(kl, list) or len(kl) < 150:
         log("SELF-TUNE skipped: not enough klines"); return None
     closes = [float(k[4]) for k in kl]
+    vols = [float(k[5]) for k in kl]
     cut = int(len(closes)*0.7)
-    train = closes[:cut]; test = closes[cut:]
-    # train split to find best params
-    train_res = []
-    for (lo, hi) in CANDIDATE_SETS:
-        m = backtest_on(lo, hi, train)
-        if m: train_res.append((lo, hi, m))
-    if not train_res:
-        return None
-    train_res.sort(key=lambda x: x[2]["ret"], reverse=True)
-    best = train_res[0]
-    # out-of-sample validation on the test split
-    test_best = backtest_on(best[0], best[1], test)
-    test_cur = backtest_on(RSI_LOW, RSI_HIGH, test)
+    train_c, test_c = closes[:cut], closes[cut:]
+    train_v, test_v = vols[:cut], vols[cut:]
+    results = []
+    for strat, cands in STRATEGIES.items():
+        best_params = None; best_train = None
+        for p in cands:
+            m = backtest_closes(train_c, strat, p, train_v)
+            if best_train is None or m["ret"] > best_train["ret"]:
+                best_train = m; best_params = p
+        test_m = backtest_closes(test_c, strat, best_params, test_v)
+        results.append({"strategy": strat, "params": best_params,
+                        "train_ret": best_train["ret"], "test_ret": test_m["ret"],
+                        "trades": test_m["trades"], "win_rate": test_m["win_rate"]})
+    results.sort(key=lambda x: x["test_ret"], reverse=True)
+    best = results[0]
+    cur_m = backtest_closes(test_c, STRATEGY, STRATEGY_PARAMS, test_v)
+    cur_test = cur_m["ret"] if cur_m else 0.0
     applied = False
-    if test_best and test_cur and test_best["ret"] > test_cur["ret"] + 1.0:
-        RSI_LOW, RSI_HIGH = best[0], best[1]; applied = True
+    if best["test_ret"] > cur_test + 1.0:
+        STRATEGY, STRATEGY_PARAMS = best["strategy"], best["params"]; applied = True
     report = {
         "ts": dt.datetime.now().isoformat(),
-        "method": "walk-forward 70/30 train/test",
-        "current": {"low": RSI_LOW, "high": RSI_HIGH, "test_ret": test_cur["ret"] if test_cur else 0.0},
-        "best": {"low": best[0], "high": best[1],
-                 "train_ret": best[2]["ret"], "test_ret": test_best["ret"] if test_best else 0.0,
-                 "metrics": test_best or {}},
+        "method": "walk-forward 70/30 (per strategy, OOS)",
+        "current": {"strategy": STRATEGY, "params": STRATEGY_PARAMS, "test_ret": cur_test},
+        "best": best,
         "applied": applied,
-        "candidates": [{"low":lo,"high":hi,"train_ret":m["ret"],"test_ret":(backtest_on(lo,hi,test) or {}).get("ret",0.0)}
-                        for (lo,hi,m) in train_res],
+        "candidates": results,
     }
     try:
         with open(TUNE_FILE, "w") as f:
             json.dump(report, f, indent=2)
     except Exception:
         pass
-    log(f"SELF-TUNE best={best[0]}/{best[1]} test_ret={(test_best or {}).get('ret',0)}% applied={applied}")
+    log(f"SELF-TUNE best={best['strategy']} test_ret={best['test_ret']}% applied={applied}")
     return report
-
-def backtest_on(low, high, closes):
-    """Backtest the improved strategy on an explicit closes list (for walk-forward).
-    `low` = entry quantile % (adaptive oversold), `high` = exit RSI (mean-reversion target)."""
-    cash, pos, entry, trades = 1000.0, 0.0, 0.0, 0
-    wins = losses = 0
-    for i in range(14, len(closes)):
-        r = rsi(closes[:i+1]); rp = rsi(closes[:i]); px = closes[i]
-        if pos == 0:
-            if adaptive_entry(closes, i, low):
-                entry = px; pos = cash/px; cash = 0.0; trades += 1; held = 0
-        else:
-            held += 1
-            pnl = pos*px - pos*entry
-            if (r >= high) or (px <= entry*(1-SL_PCT)) or (px >= entry*(1+TP_PCT)) or (held >= MAX_HOLD):
-                if pnl >= 0: wins += 1
-                else: losses += 1
-                cash = pos*px; pos = 0.0
-    if pos > 0: cash = pos*closes[-1]
-    ret = (cash-1000.0)/1000.0
-    wr = (wins/(wins+losses))*100 if (wins+losses) else 0.0
-    return {"ret": round(ret*100,2), "win_rate": round(wr,1), "trades": trades,
-            "wins": wins, "losses": losses, "max_dd": 0.0}
 
 def make_state():
     fills = load_fills()
@@ -388,7 +466,8 @@ def make_state():
         "total_funds":round(total_funds,2),
         "fills":len(fills),"round_trips":len([f for f in fills if f["side"]=="SELL"]),
         "equity_curve":equity,"portfolio":pa,
-        "rsi": {"low": RSI_LOW, "high": RSI_HIGH},
+        "strategy": STRATEGY,
+        "strategy_params": STRATEGY_PARAMS,
         "tune": load_tune(),
         "creds_loaded": bool(creds().get("apiKey")),
         "updated":dt.datetime.now().isoformat(),

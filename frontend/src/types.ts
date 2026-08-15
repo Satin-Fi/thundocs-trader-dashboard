@@ -23,14 +23,15 @@ export interface State {
     week_loss: number
     week_net: number
   }
-  rsi: { low: number; high: number }
+  strategy: string
+  strategy_params: Record<string, number>
   tune: {
     ts: string
     method: string
-    current: { low: number; high: number; test_ret: number }
-    best: { low: number; high: number; train_ret: number; test_ret: number; metrics: { ret: number; win_rate: number; trades: number } }
+    current: { strategy: string; params: Record<string, number>; test_ret: number }
+    best: { strategy: string; params: Record<string, number>; train_ret: number; test_ret: number; trades: number; win_rate: number }
     applied: boolean
-    candidates: { low: number; high: number; train_ret: number; test_ret: number }[]
+    candidates: { strategy: string; params: Record<string, number>; train_ret: number; test_ret: number; trades: number; win_rate: number }[]
   } | null
   updated: string
 }

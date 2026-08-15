@@ -120,16 +120,16 @@ export default function App() {
               <div className="head">
                 <div>
                   <h2>Strategy Self-Review</h2>
-                  <span className="hint">walk-forward 70/30 · bot retunes every ~2h · {state.rsi.low}/{state.rsi.high} active · out-of-sample = honest score</span>
+                  <span className="hint">walk-forward 70/30 OOS · active: <b>{state.strategy}</b> {JSON.stringify(state.strategy_params)} · bot picks best per regime</span>
                 </div>
-                <span className={`badge ${state.tune.applied ? 'sell' : 'buy'}`}>{state.tune.applied ? 'tuned' : 'stable'}</span>
+                <span className={`badge ${state.tune.applied ? 'sell' : 'buy'}`}>{state.tune.applied ? 'switched' : 'stable'}</span>
               </div>
               <div className="tune-grid">
                 {state.tune.candidates.map((c, i) => (
-                  <div key={i} className={`tune-card ${(c.low===state.tune!.best.low && c.high===state.tune!.best.high) ? 'best' : ''}`}>
-                    <div className="tune-set">RSI {c.low}/{c.high}</div>
+                  <div key={i} className={`tune-card ${(c.strategy===state.tune!.best.strategy && JSON.stringify(c.params)===JSON.stringify(state.tune!.best.params)) ? 'best' : ''}`}>
+                    <div className="tune-set">{c.strategy}</div>
                     <div className={`tune-ret ${(c.test_ret??0) >= 0 ? 'pos' : 'neg'}`}>{(c.test_ret??0) >= 0 ? '+' : ''}{(c.test_ret??0).toFixed(2)}%</div>
-                    <div className="tune-wr">out-of-sample · train {(c.train_ret??0).toFixed(1)}%</div>
+                    <div className="tune-wr">OOS · {c.trades} trades · {c.win_rate}% wr</div>
                   </div>
                 ))}
               </div>
