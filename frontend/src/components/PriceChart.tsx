@@ -13,6 +13,7 @@ export interface IndicatorOpts {
   breakout: boolean
   rsi: boolean
   macd: boolean
+  sr: boolean
 }
 
 interface Props {
@@ -41,6 +42,7 @@ export default function PriceChart({ klines, fills, position, livePrice, interva
   const macdLineRef = useRef<ISeriesApi<'Line'> | null>(null)
   const macdSigRef = useRef<ISeriesApi<'Line'> | null>(null)
   const slLinesRef = useRef<IPriceLine[]>([])
+  const srLinesRef = useRef<IPriceLine[]>([])
   const liveLineRef = useRef<IPriceLine | null>(null)
   const shownInterval = useRef<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -161,6 +163,24 @@ export default function PriceChart({ klines, fills, position, livePrice, interva
       if (!boLoRef.current) boLoRef.current = chart.addLineSeries({ color: 'rgba(244,63,94,0.5)', lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false })
       boUpRef.current.applyOptions({ visible: opts.breakout }); boLoRef.current.applyOptions({ visible: opts.breakout })
       if (opts.breakout) { boUpRef.current.setData(toLine(indicators.breakout_upper)); boLoRef.current.setData(toLine(indicators.breakout_lower)) }
+
+      // Support / Resistance zones — price lines on the main chart, one per zone,
+      // colored by type (green support / red resistance) and thickness by strength.
+      srLinesRef.current.forEach(l => { try { candle.removePriceLine(l) } catch {} })
+      srLinesRef.current = []
+      if (opts.sr && indicators.sr_zones) {
+        for (const z of indicators.sr_zones) {
+          const isS = z.type === 'S'
+          srLinesRef.current.push(candle.createPriceLine({
+            price: z.level,
+            color: isS ? 'rgba(0,217,146,0.55)' : 'rgba(251,86,91,0.55)',
+            lineWidth: z.strength >= 6 ? 3 : z.strength >= 3 ? 2 : 1,
+            lineStyle: LineStyle.Dotted,
+            axisLabelVisible: true,
+            title: `${isS ? 'S' : 'R'} ${z.level.toFixed(0)}`,
+          }))
+        }
+      }
 
       // RSI sub-chart
       if (opts.rsi) rsi.setData(toLine(indicators.rsi))

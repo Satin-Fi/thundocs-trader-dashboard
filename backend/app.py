@@ -221,6 +221,53 @@ def vol_avg(vols, n):
     v = vols[-n:] if len(vols) >= n else vols
     return sum(v) / len(v) if v else 0.0
 
+def sr_zones(highs, lows, closes, vols, swing=5, merge_pct=0.4, top_n=6):
+    """Support/Resistance zones from the bot's own analysis of the candles.
+
+    Method: find swing highs/lows (pivots) using a window, then cluster nearby
+    pivots into zones (within `merge_pct`), score by how many pivots + volume
+    confirm the level, and return the strongest `top_n` zones.
+    Returns a list of {level, type ('S'|'R'), strength, touches} sorted by strength.
+    """
+    n = len(closes)
+    if n < 2 * swing + 1:
+        return []
+    pivots = []  # (price, 'R'|'S', vol, idx)
+    for i in range(swing, n - swing):
+        hi = highs[i]; lo = lows[i]
+        is_h = all(highs[j] <= hi for j in range(i - swing, i + swing + 1))
+        is_l = all(lows[j] >= lo for j in range(i - swing, i + swing + 1))
+        if is_h:
+            pivots.append((hi, 'R', vols[i] if i < len(vols) else 0.0, i))
+        if is_l:
+            pivots.append((lo, 'S', vols[i] if i < len(vols) else 0.0, i))
+    if not pivots:
+        return []
+    # cluster: greedy merge of pivots within merge_pct of a zone anchor
+    clusters = []  # {type, level, vol, touches, idxs}
+    for price, typ, vol, idx in sorted(pivots, key=lambda x: -x[0]):
+        placed = False
+        for c in clusters:
+            if c['type'] == typ and abs(price - c['level']) / c['level'] <= merge_pct / 100.0:
+                # weighted update toward the new pivot
+                c['touches'] += 1
+                c['vol'] += vol
+                c['level'] = (c['level'] * (c['touches'] - 1) + price) / c['touches']
+                placed = True
+                break
+        if not placed:
+            clusters.append({'type': typ, 'level': price, 'vol': vol, 'touches': 1, 'idxs': [idx]})
+    # strength: touches (recurrence) * volume, normalized
+    maxvol = max((c['vol'] for c in clusters), default=1.0) or 1.0
+    for c in clusters:
+        c['strength'] = round(c['touches'] * (0.5 + 0.5 * c['vol'] / maxvol), 2)
+    clusters.sort(key=lambda c: -c['strength'])
+    return [
+        {"level": round(c['level'], 2), "type": c['type'], "strength": c['strength'], "touches": c['touches']}
+        for c in clusters[:top_n]
+    ]
+
+
 def compute_indicators(interval=KL_INTERVAL, limit=300):
     """Compute the indicator series the dashboard overlays on the chart, using
     the SAME math the bot's strategy uses (rsi/ema/macd/breakout). Returns a
@@ -289,6 +336,9 @@ def compute_indicators(interval=KL_INTERVAL, limit=300):
         else:
             upper.append(max(highs[i - lb:i])); lower.append(min(lows[i - lb:i]))
 
+    # Support / Resistance zones (bot's own pivot+volume analysis)
+    sr = sr_zones(highs, lows, closes, vols)
+
     # Live signal from the active strategy (so the dashboard shows WHY HOLD/BUY/SELL)
     sig = "HOLD"; reason = ""
     try:
@@ -309,6 +359,7 @@ def compute_indicators(interval=KL_INTERVAL, limit=300):
         "macd_hist": macd_hist,
         "breakout_upper": upper,
         "breakout_lower": lower,
+        "sr_zones": sr,
         "signal": sig,
         "signal_reason": reason,
         "strategy": STRATEGY,

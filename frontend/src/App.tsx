@@ -15,7 +15,7 @@ export default function App() {
   const [fills, setFills] = useState<Fill[]>([])
   const [klines, setKlines] = useState<Klines | null>(null)
   const [indicators, setIndicators] = useState<Indicators | null>(null)
-  const [opts, setOpts] = useState<IndicatorOpts>({ ema20: true, ema50: true, breakout: false, rsi: true, macd: true })
+  const [opts, setOpts] = useState<IndicatorOpts>({ ema20: true, ema50: true, breakout: false, rsi: true, macd: true, sr: true })
   const [tfState, setTf] = useState('15m')
   const [online, setOnline] = useState(true)
   const [err, setErr] = useState('')
@@ -236,7 +236,7 @@ export default function App() {
                 <div className="ind-menu">
                   {([
                     ['ema20', 'EMA 20'], ['ema50', 'EMA 50'], ['breakout', 'Breakout'],
-                    ['rsi', 'RSI'], ['macd', 'MACD'],
+                    ['rsi', 'RSI'], ['macd', 'MACD'], ['sr', 'S/R'],
                   ] as [keyof IndicatorOpts, string][]).map(([key, label]) => (
                     <button key={key} className={opts[key] ? 'on' : ''} onClick={() => setOpts(o => ({ ...o, [key]: !o[key] }))}>
                       {label}
@@ -244,7 +244,7 @@ export default function App() {
                   ))}
                 </div>
                 <span className="hint">
-                  <span className="lg-buy">▲ buy</span> <span className="lg-sell">▼ sell</span> · <span style={{color:'#22d3ee'}}>entry</span> <span style={{color:'#f43f5e'}}>SL</span> <span style={{color:'#facc15'}}>TP</span> · {klines ? klines.candles.length : 0} candles
+                  <span className="lg-buy">▲ buy</span> <span className="lg-sell">▼ sell</span> · <span style={{color:'#22d3ee'}}>entry</span> <span style={{color:'#f43f5e'}}>SL</span> <span style={{color:'#facc15'}}>TP</span> · <span style={{color:'#00d992'}}>S</span>/<span style={{color:'#fb565b'}}>R</span> zones · {klines ? klines.candles.length : 0} candles
                 </span>
               </div>
             </div>

@@ -35,6 +35,7 @@ export interface Indicators {
   macd_hist: number[]
   breakout_upper: (number | null)[]
   breakout_lower: (number | null)[]
+  sr_zones: { level: number; type: 'S' | 'R'; strength: number; touches: number }[]
   signal: 'BUY' | 'SELL' | 'HOLD'
   signal_reason: string
   strategy: string
