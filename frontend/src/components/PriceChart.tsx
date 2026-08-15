@@ -47,16 +47,15 @@ export default function PriceChart({ klines, fills, position, livePrice, interva
   const shownInterval = useRef<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
-  // create charts once
-
+  // create charts once — use autoSize so each chart ALWAYS fills its container
+  // box exactly (no manual width => cannot overflow / go out of the container).
   useLayoutEffect(() => {
     const el = wrapRef.current
     if (!el) return
     setErr(null)
     try {
-      const w = el.clientWidth || el.parentElement?.clientWidth || 800
       const chart = createChart(el, {
-        width: w, height: 440,
+        autoSize: true, height: 440,
         layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#aeb4c0', fontFamily: 'Inter, system-ui, sans-serif' },
         grid: { vertLines: { color: 'rgba(255,255,255,0.05)' }, horzLines: { color: 'rgba(255,255,255,0.05)' } },
         crosshair: { mode: 0 },
@@ -69,16 +68,16 @@ export default function PriceChart({ klines, fills, position, livePrice, interva
       try { chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } }) } catch {}
 
       // RSI sub-chart
-      const rsiWrap = document.createElement('div'); rsiWrap.className = 'subchart'; rsiWrap.style.height = '120px'
-      const rsiChart = createChart(rsiWrap, { width: w, height: 120, layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#aeb4c0' }, grid: { vertLines: { color: 'rgba(255,255,255,0.04)' }, horzLines: { color: 'rgba(255,255,255,0.04)' } }, rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)' }, timeScale: { borderColor: 'rgba(255,255,255,0.08)', timeVisible: true, secondsVisible: false }, handleScale: false, handleScroll: true })
+      const rsiWrap = document.createElement('div'); rsiWrap.className = 'subchart'
+      const rsiChart = createChart(rsiWrap, { autoSize: true, height: 120, layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#aeb4c0' }, grid: { vertLines: { color: 'rgba(255,255,255,0.04)' }, horzLines: { color: 'rgba(255,255,255,0.04)' } }, rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)' }, timeScale: { borderColor: 'rgba(255,255,255,0.08)', timeVisible: true, secondsVisible: false }, handleScale: false, handleScroll: true })
       const rsi = rsiChart.addLineSeries({ color: '#a78bfa', lineWidth: 2, priceFormat: { type: 'custom', formatter: (p: number) => p.toFixed(0) } })
       // RSI 30/70 guides
       rsi.createPriceLine({ price: 70, color: 'rgba(251,86,91,0.35)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: '70' })
       rsi.createPriceLine({ price: 30, color: 'rgba(0,217,146,0.35)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: '30' })
 
       // MACD sub-chart
-      const macdWrap = document.createElement('div'); macdWrap.className = 'subchart'; macdWrap.style.height = '120px'
-      const macdChart = createChart(macdWrap, { width: w, height: 120, layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#aeb4c0' }, grid: { vertLines: { color: 'rgba(255,255,255,0.04)' }, horzLines: { color: 'rgba(255,255,255,0.04)' } }, rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)' }, timeScale: { borderColor: 'rgba(255,255,255,0.08)', timeVisible: true, secondsVisible: false }, handleScale: false, handleScroll: true })
+      const macdWrap = document.createElement('div'); macdWrap.className = 'subchart'
+      const macdChart = createChart(macdWrap, { autoSize: true, height: 120, layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#aeb4c0' }, grid: { vertLines: { color: 'rgba(255,255,255,0.04)' }, horzLines: { color: 'rgba(255,255,255,0.04)' } }, rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)' }, timeScale: { borderColor: 'rgba(255,255,255,0.08)', timeVisible: true, secondsVisible: false }, handleScale: false, handleScroll: true })
       const macdHist = macdChart.addHistogramSeries({ priceFormat: { type: 'custom', formatter: (p: number) => p.toFixed(0) } })
       const macdLine = macdChart.addLineSeries({ color: '#4ea8ff', lineWidth: 2 })
       const macdSig = macdChart.addLineSeries({ color: '#facc15', lineWidth: 2 })
@@ -94,19 +93,7 @@ export default function PriceChart({ klines, fills, position, livePrice, interva
     }
   }, [])
 
-  // keep widths synced
-  useLayoutEffect(() => {
-    const el = wrapRef.current, chart = chartRef.current
-    if (!el || !chart) return
-    const sync = () => {
-      const w = el.clientWidth || 800
-      try { chart.applyOptions({ width: w }) } catch {}
-      try { rsiChartRef.current?.applyOptions({ width: w }) } catch {}
-      try { macdChartRef.current?.applyOptions({ width: w }) } catch {}
-    }
-    const ro = new ResizeObserver(sync); ro.observe(el); sync()
-    return () => ro.disconnect()
-  }, [])
+  // autoSize handles responsiveness; no manual width sync needed.
 
   // candle/volume/trade data + SL/TP + fit on interval change
   useEffect(() => {
@@ -211,7 +198,7 @@ export default function PriceChart({ klines, fills, position, livePrice, interva
 
   if (err) return <div ref={wrapRef} className="tv-chart"><div className="chart-err">chart error: {err}</div></div>
   return (
-    <div className="chart-wrap">
+    <div className="tvwrap">
       <div ref={wrapRef} className="tv-chart" />
       <div id="chart-subs" className="chart-subs" />
     </div>
