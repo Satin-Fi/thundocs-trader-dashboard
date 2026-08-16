@@ -373,7 +373,16 @@ def compute_indicators(interval=KL_INTERVAL, limit=300):
     # Live signal from the active strategy (so the dashboard shows WHY HOLD/BUY/SELL)
     sig = "HOLD"; reason = ""
     try:
-        s, r = gen_signal(closes, vols, n - 1, (1 if btc_open_for_signal() > DUST else 0),
+        # Derive flat/holding from the LOCAL fills ledger (no slow signed /account
+        # call) so this endpoint stays fast on every chart refresh.
+        _fills = load_fills()
+        _open = 0.0
+        for f in reversed(_fills):
+            if f["side"] == "BUY":
+                _open = float(f["qty"]); break
+            else:
+                _open = 0.0; break
+        s, r = gen_signal(closes, vols, n - 1, (1 if _open > DUST else 0),
                           closes[-1], 0, STRATEGY_PARAMS, STRATEGY, sr)
         sig, reason = s, r
     except Exception as e:
@@ -396,6 +405,19 @@ def compute_indicators(interval=KL_INTERVAL, limit=300):
         "strategy": STRATEGY,
         "strategy_params": STRATEGY_PARAMS,
     }
+
+# In-memory cache so the (klines + signal) computation only runs occasionally;
+# repeated chart refreshes / toggle flips return instantly.
+_IND_CACHE = {}  # interval -> (ts, result)
+_IND_TTL = 30.0
+def compute_indicators_cached(interval=KL_INTERVAL, limit=300):
+    now = time.time()
+    hit = _IND_CACHE.get(interval)
+    if hit and (now - hit[0]) < _IND_TTL:
+        return hit[1]
+    res = compute_indicators(interval, limit)
+    _IND_CACHE[interval] = (now, res)
+    return res
 
 def btc_open_for_signal():
     try:
@@ -436,6 +458,8 @@ STRATEGY_LIB = {
     },
 }
 STRATEGY_FILE = os.path.join(HERE, "strategy.json")
+# Breakout params kept as a convenience alias (single source = STRATEGY_LIB).
+BREAKOUT_PARAMS = STRATEGY_LIB["breakout"]["params"]
 
 def _load_strategy():
     global STRATEGY, STRATEGY_PARAMS
@@ -971,7 +995,7 @@ class H(BaseHTTPRequestHandler):
                 interval = params.get("interval", KL_INTERVAL)
                 if interval not in ("1m","3m","5m","15m","30m","1h","2h","4h","6h","12h","1d","3d","1w"):
                     interval = KL_INTERVAL
-                self._send(200, compute_indicators(interval))
+                self._send(200, compute_indicators_cached(interval))
             except Exception as e:
                 self._send(500, {"error": str(e)})
 
