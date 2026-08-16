@@ -20,7 +20,7 @@ export default function App() {
   const [opts, setOpts] = useState<IndicatorOpts>({ ema20: true, ema50: true, breakout: false, rsi: true, macd: true, sr: true })
   const [tfState, setTf] = useState('15m')
   const [online, setOnline] = useState(true)
-  const [err, setErr] = useState('')
+  const [connErr, setConnErr] = useState('')
   const priceRef = useRef<HTMLSpanElement>(null)
   const prevPrice = useRef<number>(0)
   const tfRef = useRef(tfState)
@@ -55,24 +55,29 @@ export default function App() {
   }, [wsPrice])
 
   // MEDIUM poll (15s): full state (position, portfolio, funds) + fills. Heavier
-  // (signed /account call) so we don't run it every 2s.
+  // (signed /account call) so we don't run it every 2s. On failure, show a
+  // "reconnecting" banner and retry faster so a tunnel blip self-heals.
   useEffect(() => {
     let alive = true
+    let retryId: ReturnType<typeof setInterval> | undefined
     const poll = async () => {
       try {
         const [s, f] = await Promise.all([fetchState(), fetchFills()])
         if (!alive) return
         setState(s)
         setFills(f)
-        setErr('')
+        setConnErr('')
+        if (retryId) { clearInterval(retryId); retryId = undefined }
       } catch (e) {
         if (!alive) return
-        setErr(e instanceof Error ? e.message : 'offline')
+        setConnErr(e instanceof Error ? e.message : 'offline')
+        // retry every 4s while down (instead of waiting 15s)
+        if (!retryId) retryId = setInterval(poll, 4000)
       }
     }
     poll()
     const id = setInterval(poll, 15000)
-    return () => { alive = false; clearInterval(id) }
+    return () => { alive = false; clearInterval(id); if (retryId) clearInterval(retryId) }
   }, [])
 
   // SLOW poll (20s): refresh the active interval's candles. Candle bodies only
@@ -99,7 +104,7 @@ export default function App() {
     if (cached) setKlines(cached)
     fetchKlines(tfState)
       .then(k => { if (alive) { cacheRef.current[tfState] = k; if (tfRef.current === tfState) setKlines(k) } })
-      .catch(() => {})
+      .catch(() => { if (alive) setConnErr('chart data unreachable') })
     return () => { alive = false }
   }, [tfState])
 
@@ -113,7 +118,7 @@ export default function App() {
     let alive = true
     fetchIndicators(tfState)
       .then(d => { if (alive) setIndicators(d) })
-      .catch(() => {})
+      .catch(() => { if (alive) setConnErr('indicators unreachable') })
     return () => { alive = false }
   }, [tfState])
 
@@ -227,6 +232,14 @@ export default function App() {
             <div className="panel rise d4">
               <div className="head"><h2>Current Position</h2><span className="hint">flat · no open trade</span></div>
               <div className="empty">Bot is flat — watching for an entry signal.</div>
+            </div>
+          )}
+
+          {/* CONNECTION banner — shows when the bot/tunnel is unreachable and
+              auto-retries, so a transient blip never looks like a dead app. */}
+          {connErr && (
+            <div className="conn-banner">
+              <span className="dot" /> Reconnecting to bot… <span className="muted">({connErr.slice(0, 60)})</span> — retrying automatically
             </div>
           )}
 
@@ -350,7 +363,7 @@ export default function App() {
           </div>
         </>
       ) : (
-        <div className="panel"><div className={err ? 'err' : 'empty'}>{err || 'connecting to trading engine…'}</div></div>
+        <div className="panel"><div className={connErr ? 'err' : 'empty'}>{connErr || 'connecting to trading engine…'}</div></div>
       )}
     </div>
   )

@@ -206,6 +206,11 @@ tbody tr:last-child td { border-bottom: none; }
 .badge.buy { background: rgba(0,217,146,0.18); color: var(--positive); }
 .badge.sell { background: rgba(251,86,91,0.18); color: var(--negative); }
 
+.conn-banner { display: flex; align-items: center; gap: 9px; padding: 10px 14px; border-radius: 10px; background: rgba(251,86,91,0.12); border: 1px solid rgba(251,86,91,0.4); color: #ffb4b7; font-size: 13px; font-weight: 600; }
+.conn-banner .dot { width: 8px; height: 8px; border-radius: 50%; background: #fb565b; animation: pulse 1.2s infinite; }
+.conn-banner .muted { color: #c98a8d; font-weight: 500; }
+@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.3 } }
+
 .lg-sell { color: var(--negative); font-weight: 700; }
 
 @media (max-width: 860px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
