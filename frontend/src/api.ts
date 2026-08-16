@@ -12,8 +12,21 @@ const API_URL: string = (
 ).replace(/\/$/, '')
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  let res: Response
+  try {
+    res = await fetch(`${API_URL}${path}`)
+  } catch (e) {
+    // network-level failure (tunnel down / DNS blip) — surface as offline
+    throw new Error('offline')
+  }
+  // Cloudflare quick-tunnels return their own HTML error page (often as HTTP
+  // 200 text/html) when the connector is momentarily down. Don't try to JSON-
+  // parse that — treat any non-JSON body as unreachable so the UI shows the
+  // reconnect banner instead of a raw "HTTP 404".
+  const ct = res.headers.get('content-type') || ''
+  if (!res.ok || !ct.includes('application/json')) {
+    throw new Error(res.ok ? 'tunnel unreachable' : `HTTP ${res.status}`)
+  }
   return (await res.json()) as T
 }
 
