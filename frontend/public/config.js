@@ -1,4 +1,3 @@
 // Runtime config: tells the frontend where the backend API lives.
-// Served verbatim by Vercel from /config.js (no build-time env needed).
-// When the desktop tunnel restarts, update API_URL below and redeploy.
-window.__API_URL__ = "https://jewelry-tulsa-activation-catalogue.trycloudflare.com";
+// Auto-written by backend/start.py when the tunnel starts.
+window.__API_URL__ = "shoot-displayed-with-substance.trycloudflare.com";
