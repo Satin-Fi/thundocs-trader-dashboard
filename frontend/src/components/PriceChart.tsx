@@ -85,6 +85,13 @@ export default function PriceChart({ klines, fills, position, livePrice, interva
       chartRef.current = chart; candleRef.current = candle; volRef.current = vol
       rsiChartRef.current = rsiChart; rsiRef.current = rsi
       macdChartRef.current = macdChart; macdHistRef.current = macdHist; macdLineRef.current = macdLine; macdSigRef.current = macdSig
+      ;(window as any).__diag = () => ({
+        rsiSize: rsiChart.getSize(),
+        rsiData: rsiRef.current ? rsiRef.current.data().length : -1,
+        macdSize: macdChart.getSize(),
+        rsiWrapH: rsiWrapRef.current ? Math.round(rsiWrapRef.current.getBoundingClientRect().height) : -1,
+        rsiWrapW: rsiWrapRef.current ? Math.round(rsiWrapRef.current.getBoundingClientRect().width) : -1,
+      })
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
     }
