@@ -1,5 +1,8 @@
 {
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://sends-enrolled-aquatic-gmc.trycloudflare.com/api/:path*" }
+    {
+      "source": "/api/:path*",
+      "destination": "https://gardens-prime-billy-valley.trycloudflare.com/api/:path*"
+    }
   ]
 }
