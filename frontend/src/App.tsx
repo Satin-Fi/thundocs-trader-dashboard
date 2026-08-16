@@ -114,12 +114,18 @@ export default function App() {
   }, [])
 
   // indicators for the active interval (RSI/EMA/MACD/breakout + live signal)
+  // Retries like the state poll, because a single failed fetch (tunnel blip)
+  // must not permanently leave indicators null (which blanks the sub-charts).
   useEffect(() => {
     let alive = true
-    fetchIndicators(tfState)
-      .then(d => { if (alive) setIndicators(d) })
-      .catch(() => { if (alive) setConnErr('indicators unreachable') })
-    return () => { alive = false }
+    let retry: ReturnType<typeof setInterval> | undefined
+    const load = () => {
+      fetchIndicators(tfState)
+        .then(d => { if (alive) { setIndicators(d); if (retry) { clearInterval(retry); retry = undefined } } })
+        .catch(() => { if (alive && !retry) retry = setInterval(load, 4000) })
+    }
+    load()
+    return () => { alive = false; if (retry) clearInterval(retry) }
   }, [tfState])
 
   const eq = state?.equity_curve ?? []
