@@ -287,27 +287,25 @@ export default function App() {
               </div>
             </div>
             <div className="strat-switch">
-              <span className="k">Switch strategy:</span>
-              <div className="strat-btns">
+              <span className="k">Strategy:</span>
+              <select
+                className="strat-select"
+                value={strategies.current}
+                disabled={switching}
+                onChange={async (e) => {
+                  const key = e.target.value
+                  setSwitching(true)
+                  try {
+                    await setStrategy(key)
+                    setStrategies(s => ({ ...s, current: key }))
+                  } catch { /* ignore */ }
+                  finally { setSwitching(false) }
+                }}
+              >
                 {Object.entries(strategies.list).map(([key, s]) => (
-                  <button
-                    key={key}
-                    className={strategies.current === key ? 'on' : ''}
-                    disabled={switching}
-                    title={s.desc}
-                    onClick={async () => {
-                      setSwitching(true)
-                      try {
-                        await setStrategy(key)
-                        setStrategies(s => ({ ...s, current: key }))
-                      } catch (e) { /* ignore */ }
-                      finally { setSwitching(false) }
-                    }}
-                  >
-                    {s.name}
-                  </button>
+                  <option key={key} value={key}>{s.name}</option>
                 ))}
-              </div>
+              </select>
             </div>
             <div className="strat-desc">
               {strategies.list[strategies.current]?.desc}
