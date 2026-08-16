@@ -167,7 +167,7 @@ export default function PriceChart({ klines, fills, position, livePrice, interva
       }
 
       // RSI sub-chart
-      if (opts.rsi) rsi.setData(toLine(indicators.rsi))
+      if (opts.rsi) { rsi.setData(toLine(indicators.rsi)); rsiChartRef.current?.timeScale().fitContent() }
       else rsi.setData([])
 
       // MACD sub-chart
@@ -175,6 +175,7 @@ export default function PriceChart({ klines, fills, position, livePrice, interva
         mh.setData(indicators.macd_hist.map((v: number, i: number) => ({ time: times[i], value: v, color: v >= 0 ? 'rgba(0,217,146,0.6)' : 'rgba(251,86,91,0.6)' })))
         ml.setData(toLine(indicators.macd_line))
         ms.setData(toLine(indicators.macd_signal))
+        macdChartRef.current?.timeScale().fitContent()
       } else {
         mh.setData([]); ml.setData([]); ms.setData([])
       }
