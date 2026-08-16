@@ -1,20 +1,20 @@
-import type { State, Fill, Klines } from './types'
+import type { State, Fill, Klines, Indicators } from './types'
 
-// API base is set at runtime via /config.js (window.__API_URL__), which Vercel
-// serves verbatim — no build-time env needed. Falls back to VITE_API_URL if set.
+// API base is set at runtime by /config.js (window.__API_URL__), which Vercel
+// serves verbatim. An EMPTY string there means "talk to my own origin" — Vercel
+// proxies /api/* to the backend tunnel (see vercel.json). No build-time env,
+// no hardcoded URL, so a stale tunnel can never be baked into the bundle.
 declare global {
   interface Window { __API_URL__?: string }
 }
-const API_URL: string = (
-  (typeof window !== 'undefined' && window.__API_URL__) ||
-  (import.meta.env.VITE_API_URL as string) ||
-  ''
-).replace(/\/$/, '')
+const API_URL: string = (typeof window !== 'undefined' && window.__API_URL__) || ''
+// alias used by useBinancePrice for the SSE stream URL
+export const apiBase = API_URL
 
-async function get<T>(path: string): Promise<T> {
+async function get<T>(path: string, opts?: RequestInit): Promise<T> {
   let res: Response
   try {
-    res = await fetch(`${API_URL}${path}`)
+    res = await fetch(`${API_URL}${path}`, opts)
   } catch (e) {
     // network-level failure (tunnel down / DNS blip) — surface as offline
     throw new Error('offline')
@@ -32,35 +32,13 @@ async function get<T>(path: string): Promise<T> {
 
 export const fetchState = () => get<State>('/api/state')
 export const fetchFills = () => get<Fill[]>('/api/fills')
-export const fetchPrice = () => get<{ price: number; updated: string }>('/api/price')
-export const fetchKlines = (interval = '15m') => get<Klines>(`/api/klines?interval=${interval}`)
-export const fetchIndicators = (interval = '15m') => get<Indicators>(`/api/indicators?interval=${interval}`)
+export const fetchKlines = (iv = '15m') => get<Klines>(`/api/klines?interval=${iv}`)
+export const fetchIndicators = (iv = '15m') => get<Indicators>(`/api/indicators?interval=${iv}`)
 export const fetchStrategies = () => get<{ current: string; strategies: Record<string, { name: string; desc: string; params: Record<string, number> }> }>('/api/strategies')
-export const setStrategy = async (key: string) => {
-  const res = await fetch(`${API_URL}/api/strategy`, {
+export const setStrategy = (s: string) =>
+  get<{ ok: boolean; strategy: string }>('/api/strategy', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ strategy: key }),
+    body: JSON.stringify({ strategy: s }),
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return (await res.json()) as { ok: boolean; strategy?: string; error?: string }
-}
-export const apiBase = API_URL
-
-export interface Indicators {
-  interval: string
-  times: number[]          // unix seconds, aligned with klines
-  rsi: (number | null)[]
-  ema20: number[]
-  ema50: number[]
-  macd_line: number[]
-  macd_signal: number[]
-  macd_hist: number[]
-  breakout_upper: (number | null)[]
-  breakout_lower: (number | null)[]
-  sr_zones: { level: number; type: 'S' | 'R'; strength: number; touches: number }[]
-  signal: 'BUY' | 'SELL' | 'HOLD'
-  signal_reason: string
-  strategy: string
-  strategy_params: Record<string, number>
-}
+export const fetchPrice = () => get<{ price: number }>('/api/price')

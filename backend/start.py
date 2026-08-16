@@ -28,6 +28,7 @@ import threading
 HERE = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.join(HERE, "..", "frontend")
 CONFIG_JS = os.path.join(FRONTEND_DIR, "public", "config.js")
+VERCEL_JSON = os.path.join(FRONTEND_DIR, "vercel.json")
 PORT = os.getenv("PORT", "8000")
 VERCEL_TOKEN = os.getenv("VERCEL_TOKEN", "")
 CF_BIN = os.path.join(os.path.expanduser("~"), "cloudflared.exe")
@@ -46,15 +47,28 @@ def log(msg):
 def write_config(url):
     try:
         content = (
-            "// Runtime config: tells the frontend where the backend API lives.\n"
-            "// Auto-written by backend/start.py when the tunnel starts.\n"
-            'window.__API_URL__ = "' + url + '";\n'
+            "// Runtime config: the dashboard now talks to its OWN origin (vercel.app) and\n"
+            "// Vercel proxies /api/* to the backend tunnel (see vercel.json). This keeps the\n"
+            "// browser off the flapping Cloudflare quick-tunnel edge entirely.\n"
+            'window.__API_URL__ = "";\n'
         )
         with open(CONFIG_JS, "w") as f:
             f.write(content)
-        log(f"config.js updated -> {url}")
+        log(f"config.js updated -> same-origin proxy")
     except Exception as e:
         log(f"WARN: could not write config.js: {e}")
+
+
+def write_vercel_json(url):
+    """Keep the Vercel proxy rewrite pointed at the live tunnel URL."""
+    try:
+        cfg = {"rewrites": [{"source": "/api/:path*",
+                             "destination": f"https://{url}/api/:path*"}]}
+        with open(VERCEL_JSON, "w") as f:
+            json.dump(cfg, f, indent=2)
+        log(f"vercel.json proxy -> {url}")
+    except Exception as e:
+        log(f"WARN: could not write vercel.json: {e}")
 
 
 def start_backend():
@@ -90,6 +104,7 @@ def start_tunnel():
                 if m:
                     url = m.group(1)
                     write_config(url)
+                    write_vercel_json(url)
                     captured = True
                     if VERCEL_TOKEN:
                         deploy_frontend()
