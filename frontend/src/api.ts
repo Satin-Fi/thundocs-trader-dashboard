@@ -1,4 +1,24 @@
-import type { State, Fill, Klines, Indicators } from './types'
+import type { State, Fill, Klines } from './types'
+
+// Shape returned by /api/indicators (kept permissive; the chart guards on nulls).
+export type Indicators = {
+  interval?: string
+  times?: number[]
+  rsi?: (number | null)[]
+  ema20?: number[]
+  ema50?: number[]
+  macd_line?: number[]
+  macd_signal?: number[]
+  macd_hist?: number[]
+  breakout_upper?: (number | null)[]
+  breakout_lower?: (number | null)[]
+  sr_zones?: { level: number; type: string; strength: number; touches?: number }[]
+  signal?: string
+  signal_reason?: string
+  strategy?: string
+  strategy_params?: Record<string, number>
+  error?: string
+}
 
 // API base is set at runtime by /config.js (window.__API_URL__), which Vercel
 // serves verbatim. An EMPTY string there means "talk to my own origin" — Vercel
