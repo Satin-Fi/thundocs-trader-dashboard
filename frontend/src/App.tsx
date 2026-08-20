@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchState, fetchFills, fetchKlines, fetchIndicators, fetchStrategies, setStrategy } from './api'
+import { fetchState, fetchFills, fetchKlines, fetchIndicators, fetchStrategies, setStrategy, fetchSettings, setSettings, Settings } from './api'
 import { useLivePrice } from './useBinancePrice'
 import type { State, Fill, Klines } from './types'
 import type { Indicators } from './api'
@@ -17,6 +17,9 @@ export default function App() {
   const [indicators, setIndicators] = useState<Indicators | null>(null)
   const [strategies, setStrategies] = useState<{ current: string; list: Record<string, { name: string; desc: string; params: Record<string, number> }> }>({ current: 'reversion', list: {} })
   const [switching, setSwitching] = useState(false)
+  const [settings, setSettingsState] = useState<Settings | null>(null)
+  const [capInput, setCapInput] = useState('')
+  const [capSaving, setCapSaving] = useState(false)
   const [opts, setOpts] = useState<IndicatorOpts>({ ema20: true, ema50: true, breakout: false, rsi: true, macd: true, sr: true })
   const [tfState, setTf] = useState('15m')
   const [online, setOnline] = useState(true)
@@ -122,6 +125,26 @@ export default function App() {
     load()
     return () => { alive = false; if (retry) clearInterval(retry) }
   }, [])
+
+  // capital-limit setting (how much USDT the bot may deploy per trade)
+  useEffect(() => {
+    let alive = true
+    const load = () => fetchSettings().then(d => { if (alive) { setSettingsState(d); setCapInput(String(d.max_capital)) } }).catch(() => {})
+    load()
+    const id = setInterval(load, 30000)
+    return () => { alive = false; clearInterval(id) }
+  }, [])
+
+  const saveCapital = async () => {
+    const v = parseFloat(capInput)
+    if (!(v > 0)) return
+    setCapSaving(true)
+    try {
+      const r = await setSettings(v)
+      if (r.ok) { setSettingsState(s => s ? { ...s, max_capital: r.max_capital } : s); setCapInput(String(r.max_capital)) }
+    } catch { /* ignore */ }
+    finally { setCapSaving(false) }
+  }
 
   // indicators for the active interval (RSI/EMA/MACD/breakout + live signal)
   // Retries like the state poll, because a single failed fetch (tunnel blip)
@@ -338,6 +361,33 @@ export default function App() {
             </div>
             <div className="strat-desc">
               {strategies.list[strategies.current]?.desc}
+            </div>
+          </div>
+
+          {/* CAPITAL LIMIT — how much USDT the bot may deploy per trade */}
+          <div className="panel rise d5b">
+            <div className="head">
+              <h2>Trading Capital</h2>
+              <span className="hint">max USDT the bot may use per trade</span>
+            </div>
+            <div className="cap-row">
+              <span className="k">Capital limit (USDT)</span>
+              <input
+                className="cap-input"
+                type="number"
+                min="1"
+                step="1"
+                value={capInput}
+                onChange={(e) => setCapInput(e.target.value)}
+                disabled={capSaving}
+              />
+              <button className="cap-btn" onClick={saveCapital} disabled={capSaving || !capInput}>
+                {capSaving ? 'saving…' : 'Set'}
+              </button>
+            </div>
+            <div className="cap-note">
+              Current limit: <b>${settings ? settings.max_capital.toFixed(2) : '—'}</b>
+              {state ? ` · available USDT: $${state.usdt.toFixed(2)}` : ''}
             </div>
           </div>
 

@@ -18,6 +18,19 @@ SYMBOL = os.getenv("SYMBOL", "BTCUSDT")
 KL_INTERVAL = os.getenv("KL_INTERVAL", "15m")
 LOOP_SECONDS = int(os.getenv("LOOP_SECONDS", "900"))
 MAX_NOTIONAL = float(os.getenv("MAX_NOTIONAL", "25"))
+# MAX_CAPITAL = ceiling (USDT) the bot may deploy per trade. User-controlled
+# via the dashboard ("how much money the bot can use"). Persisted to
+# settings.json so it survives restarts. Defaults to MAX_NOTIONAL.
+SETTINGS_FILE = os.path.join(HERE, "settings.json")
+def load_max_capital():
+    try:
+        d = json.load(open(SETTINGS_FILE))
+        if "max_capital" in d and float(d["max_capital"]) > 0:
+            return float(d["max_capital"])
+    except Exception:
+        pass
+    return float(os.getenv("MAX_CAPITAL", str(MAX_NOTIONAL)))
+MAX_CAPITAL = load_max_capital()
 RSI_LOW, RSI_HIGH = 45, 55   # RSI_LOW = entry RSI ceiling; RSI_HIGH = neutral exit RSI (mean-reversion target)
 # Risk / execution controls (all env-overridable, safe defaults)
 SL_PCT = float(os.getenv("SL_PCT", "0.03"))      # 3% hard stop-loss
@@ -625,7 +638,7 @@ def tick():
             eg = backtest_closes(recent, STRATEGY, p)
             edge_ok = bool(eg and eg["ret"] > 0 and eg["trades"] >= 1)
             if sig == "BUY" and edge_ok and usdt >= SIZE_MIN:
-                notional = min(MAX_NOTIONAL, usdt*0.95)
+                notional = min(MAX_NOTIONAL, MAX_CAPITAL, usdt*0.95)
                 # MARKET BUY by quote: Binance computes qty from USDT spent.
                 # Avoids manual qty rounding that triggered Binance -1013.
                 o = signed("/order", {"symbol":SYMBOL,"side":"BUY","type":"MARKET",
@@ -867,6 +880,7 @@ def make_state():
         "position": _open_position(price, open_btc, fills),
         "tune": load_tune(),
         "creds_loaded": bool(creds().get("apiKey")),
+        "max_capital": MAX_CAPITAL,
         "updated":dt.datetime.now().isoformat(),
     }
 
@@ -887,7 +901,8 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers","Content-Type")
         self.end_headers()
     def do_POST(self):
-        # only /api/strategy (switch active strategy) is accepted
+        # /api/strategy  -> switch active strategy
+        # /api/settings  -> update user-controlled settings (e.g. max_capital)
         try:
             length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(length) if length else b"{}"
@@ -901,6 +916,26 @@ class H(BaseHTTPRequestHandler):
                 self._send(200, {"ok": True, "strategy": key})
             else:
                 self._send(400, {"ok": False, "error": f"unknown strategy '{key}'"})
+        elif self.path in ("/api/settings",):
+            global MAX_CAPITAL
+            try:
+                cap = float(body.get("max_capital", MAX_CAPITAL))
+            except (TypeError, ValueError):
+                cap = MAX_CAPITAL
+            if cap <= 0:
+                self._send(400, {"ok": False, "error": "max_capital must be > 0"})
+                return
+            MAX_CAPITAL = cap
+            try:
+                cur = {}
+                if os.path.exists(SETTINGS_FILE):
+                    cur = json.load(open(SETTINGS_FILE))
+                cur["max_capital"] = cap
+                json.dump(cur, open(SETTINGS_FILE, "w"))
+            except Exception as e:
+                self._send(500, {"ok": False, "error": str(e)})
+                return
+            self._send(200, {"ok": True, "max_capital": MAX_CAPITAL})
         else:
             self._send(404, {"ok": False, "error": "not found"})
     def do_GET(self):
@@ -1003,6 +1038,11 @@ class H(BaseHTTPRequestHandler):
             self._send(200, {"current": get_strategy_key(),
                              "strategies": {k: {"name": v["name"], "desc": v["desc"], "params": v["params"]}
                                             for k, v in STRATEGY_LIB.items()}})
+
+        elif self.path in ("/api/settings",):
+            self._send(200, {"max_capital": MAX_CAPITAL,
+                             "size_min": SIZE_MIN,
+                             "max_notional": MAX_NOTIONAL})
 
         elif self.path in ("/", "/index.html"):
             fpath = os.path.join(HERE, "static", "index.html")

@@ -60,4 +60,12 @@ export const setStrategy = (s: string) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ strategy: s }),
   })
+export interface Settings { max_capital: number; size_min: number; max_notional: number }
+export const fetchSettings = () => get<Settings>('/api/settings')
+export const setSettings = (maxCapital: number) =>
+  get<{ ok: boolean; max_capital: number }>('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ max_capital: maxCapital }),
+  })
 export const fetchPrice = () => get<{ price: number }>('/api/price')
