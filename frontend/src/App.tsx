@@ -109,8 +109,18 @@ export default function App() {
   }, [tfState])
 
   // strategies list + current selection
+  // Retries like the indicators/state polls: a single failed fetch (tunnel
+  // blip) must not permanently leave the strategy dropdown empty.
   useEffect(() => {
-    fetchStrategies().then(d => setStrategies({ current: d.current, list: d.strategies })).catch(() => {})
+    let alive = true
+    let retry: ReturnType<typeof setInterval> | undefined
+    const load = () => {
+      fetchStrategies()
+        .then(d => { if (alive) { setStrategies({ current: d.current, list: d.strategies }); if (retry) { clearInterval(retry); retry = undefined } } })
+        .catch(() => { if (alive && !retry) retry = setInterval(load, 4000) })
+    }
+    load()
+    return () => { alive = false; if (retry) clearInterval(retry) }
   }, [])
 
   // indicators for the active interval (RSI/EMA/MACD/breakout + live signal)
