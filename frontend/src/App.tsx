@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchState, fetchFills, fetchKlines, fetchIndicators, fetchStrategies, setStrategy, fetchSettings, setSettings, Settings } from './api'
+import { fetchState, fetchFills, fetchKlines, fetchIndicators, fetchStrategies, setStrategy, fetchSettings, setSettings, Settings, fetchAnalytics, Analytics, fetchBacktest, Backtest } from './api'
 import { useLivePrice } from './useBinancePrice'
 import type { State, Fill, Klines } from './types'
 import type { Indicators } from './api'
@@ -20,6 +20,10 @@ export default function App() {
   const [settings, setSettingsState] = useState<Settings | null>(null)
   const [capInput, setCapInput] = useState('')
   const [capSaving, setCapSaving] = useState(false)
+  const [analytics, setAnalytics] = useState<Analytics | null>(null)
+  const [backtest, setBacktest] = useState<Backtest | null>(null)
+  const [btDays, setBtDays] = useState(30)
+  const [btLoading, setBtLoading] = useState(false)
   const [opts, setOpts] = useState<IndicatorOpts>({ ema20: true, ema50: true, breakout: false, rsi: true, macd: true, sr: true })
   const [tfState, setTf] = useState('15m')
   const [online, setOnline] = useState(true)
@@ -134,6 +138,29 @@ export default function App() {
     const id = setInterval(load, 30000)
     return () => { alive = false; clearInterval(id) }
   }, [])
+
+  // performance analytics (win rate, profit factor, drawdown, expectancy)
+  useEffect(() => {
+    let alive = true
+    let retry: ReturnType<typeof setInterval> | undefined
+    const load = () => {
+      fetchAnalytics()
+        .then(d => { if (alive) { setAnalytics(d); if (retry) { clearInterval(retry); retry = undefined } } })
+        .catch(() => { if (alive && !retry) retry = setInterval(load, 5000) })
+    }
+    load()
+    const id = setInterval(load, 20000)
+    return () => { alive = false; clearInterval(id); if (retry) clearInterval(retry) }
+  }, [])
+
+  const runBacktest = async () => {
+    setBtLoading(true)
+    try {
+      const b = await fetchBacktest(btDays)
+      if (b) setBacktest(b)
+    } catch { /* ignore */ }
+    finally { setBtLoading(false) }
+  }
 
   const saveCapital = async () => {
     const v = parseFloat(capInput)
@@ -428,6 +455,71 @@ export default function App() {
               <span className="hint">updates every 15s</span>
             </div>
             <TradeTable fills={fills} />
+          </div>
+
+          {/* RISK — open exposure & per-trade risk */}
+          {state && (() => {
+            const pos = state.position
+            const cap = settings?.max_capital ?? 25
+            const riskUsd = pos ? (pos.entry - pos.stop_loss) * pos.qty : 0
+            const rMult = pos && pos.entry > 0 ? (pos.mark_price / pos.entry - 1) / ((pos.entry - pos.stop_loss) / pos.entry) : 0
+            return (
+            <div className="panel rise d7b">
+              <div className="head"><h2>Risk · Exposure</h2><span className="hint">per-trade risk vs your capital limit</span></div>
+              <div className="risk-grid">
+                <div className="risk-cell"><span className="rk">Capital limit</span><span className="rv">${cap.toFixed(0)}</span></div>
+                <div className="risk-cell"><span className="rk">Open risk (SL)</span><span className={`rv ${riskUsd > 0 ? 'neg' : ''}`}>${riskUsd.toFixed(2)}</span></div>
+                <div className="risk-cell"><span className="rk">Exposure</span><span className="rv">{pos ? '$' + (pos.qty * pos.mark_price).toFixed(2) : '$0'}</span></div>
+                <div className="risk-cell"><span className="rk">R-multiple</span><span className="rv">{pos ? rMult.toFixed(2) + 'R' : '—'}</span></div>
+                <div className="risk-cell"><span className="rk">Max loss if SL</span><span className="rv neg">{pos ? '-$' + ((pos.entry - pos.stop_loss) * pos.qty).toFixed(2) : '—'}</span></div>
+                <div className="risk-cell"><span className="rk">Unrealized</span><span className={`rv ${pos && pos.unrealized_pnl >= 0 ? 'pos' : 'neg'}`}>{pos ? (pos.unrealized_pnl >= 0 ? '+' : '') + pos.unrealized_pnl.toFixed(2) : '—'}</span></div>
+              </div>
+            </div>
+            )
+          })()}
+
+          {/* PERFORMANCE — win rate, profit factor, drawdown, expectancy */}
+          {analytics && (
+            <div className="panel rise d7c">
+              <div className="head"><h2>Performance · Bot Stats</h2><span className="hint">{analytics.round_trips} round-trips</span></div>
+              <div className="perf-grid">
+                <div className="perf-card"><div className="pc-k">Win Rate</div><div className={`pc-v ${analytics.win_rate >= 50 ? 'pos' : 'neg'}`}>{analytics.win_rate}%</div><div className="pc-sub">{analytics.wins}W / {analytics.losses}L</div></div>
+                <div className="perf-card"><div className="pc-k">Profit Factor</div><div className={`pc-v ${analytics.profit_factor >= 1 ? 'pos' : 'neg'}`}>{analytics.profit_factor}</div><div className="pc-sub">gross win / loss</div></div>
+                <div className="perf-card"><div className="pc-k">Max Drawdown</div><div className="pc-v neg">-${analytics.max_drawdown}</div><div className="pc-sub">peak-to-trough</div></div>
+                <div className="perf-card"><div className="pc-k">Expectancy</div><div className={`pc-v ${analytics.expectancy >= 0 ? 'pos' : 'neg'}`}>{analytics.expectancy >= 0 ? '+' : ''}{analytics.expectancy}</div><div className="pc-sub">avg per trade</div></div>
+                <div className="perf-card"><div className="pc-k">Avg Win</div><div className="pc-v pos">${analytics.avg_win}</div><div className="pc-sub">avg hold {analytics.avg_hold_min}m</div></div>
+                <div className="perf-card"><div className="pc-k">Avg Loss</div><div className="pc-v neg">-${analytics.avg_loss}</div><div className="pc-sub">largest -${analytics.largest_loss}</div></div>
+              </div>
+            </div>
+          )}
+
+          {/* BACKTEST — run strategy over history */}
+          <div className="panel rise d7d">
+            <div className="head"><h2>Backtest · Strategy vs History</h2><span className="hint">run on Binance DEMO klines</span></div>
+            <div className="bt-row">
+              <span className="k" style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Window</span>
+              <select className="bt-select" value={btDays} onChange={(e) => setBtDays(parseInt(e.target.value))}>
+                <option value={7}>7 days</option>
+                <option value={30}>30 days</option>
+                <option value={60}>60 days</option>
+                <option value={90}>90 days</option>
+              </select>
+              <button className="bt-btn" onClick={runBacktest} disabled={btLoading}>{btLoading ? 'running…' : 'Run backtest'}</button>
+            </div>
+            {backtest ? (
+              <div>
+                <div className="hint" style={{ marginBottom: 8 }}>{backtest.symbol} · {backtest.interval} · {backtest.days}d · best first</div>
+                {backtest.results.map((r, i) => (
+                  <div className="bar-row" key={r.strategy}>
+                    <span className="bar-label">{r.strategy}</span>
+                    <span className="bar-track"><span className={`bar-fill ${r.ret < 0 ? 'neg' : ''}`} style={{ width: `${Math.max(4, Math.min(100, (r.ret + 20) * 2))}%` }} /></span>
+                    <span className={`bar-val ${r.ret < 0 ? 'neg' : 'pos'}`}>{r.ret >= 0 ? '+' : ''}{r.ret}% · {r.win_rate}%wr</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="empty">Press “Run backtest” to score each strategy over recent history.</div>
+            )}
           </div>
         </>
       ) : (

@@ -69,3 +69,13 @@ export const setSettings = (maxCapital: number) =>
     body: JSON.stringify({ max_capital: maxCapital }),
   })
 export const fetchPrice = () => get<{ price: number }>('/api/price')
+export interface Analytics {
+  round_trips: number; wins: number; losses: number; win_rate: number
+  profit_factor: number; avg_win: number; avg_loss: number; avg_hold_min: number
+  max_drawdown: number; expectancy: number; largest_win: number; largest_loss: number
+  per_strategy: Record<string, number>
+}
+export const fetchAnalytics = () => get<Analytics>('/api/analytics')
+export interface BacktestRow { strategy: string; params: Record<string, number>; ret: number; win_rate: number; trades: number; wins: number; losses: number; max_dd: number }
+export interface Backtest { days: number; interval: string; symbol: string; results: BacktestRow[] }
+export const fetchBacktest = (days = 30) => get<Backtest>(`/api/backtest?days=${days}`)

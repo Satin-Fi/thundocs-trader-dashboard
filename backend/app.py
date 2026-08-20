@@ -1115,6 +1115,37 @@ class H(BaseHTTPRequestHandler):
                              "size_min": SIZE_MIN,
                              "max_notional": MAX_NOTIONAL})
 
+        elif self.path in ("/api/analytics",):
+            try:
+                a = compute_analytics(load_fills())
+                self._send(200, a)
+            except Exception as e:
+                self._send(500, {"error": str(e)})
+
+        elif self.path.startswith("/api/backtest"):
+            try:
+                import urllib.parse as _up
+                q = _up.urlparse(self.path).query
+                days = int(_up.parse_qs(q).get("days", ["30"])[0])
+                days = max(3, min(180, days))
+                kl = demo_get("/klines", {"symbol": SYMBOL, "interval": KL_INTERVAL, "limit": min(1000, days * 96)})
+                if not isinstance(kl, list) or len(kl) < 60:
+                    self._send(400, {"error": "not enough klines"})
+                else:
+                    closes = [float(k[4]) for k in kl]
+                    vols = [float(k[5]) for k in kl]
+                    out = []
+                    for strat, params in STRATEGIES.items():
+                        p = params[0]
+                        m = backtest_closes(closes, strat, p, vols)
+                        out.append({"strategy": strat, "params": p})
+                        out[-1].update(m)
+                    out.sort(key=lambda x: x["ret"], reverse=True)
+                    self._send(200, {"days": days, "interval": KL_INTERVAL,
+                                     "symbol": SYMBOL, "results": out})
+            except Exception as e:
+                self._send(500, {"error": str(e)})
+
         elif self.path in ("/", "/index.html"):
             fpath = os.path.join(HERE, "static", "index.html")
             if os.path.exists(fpath):

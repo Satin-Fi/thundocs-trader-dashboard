@@ -206,6 +206,7 @@ tbody tr:last-child td { border-bottom: none; }
 .d1 { animation-delay: 0.04s; } .d2 { animation-delay: 0.10s; } .d3 { animation-delay: 0.16s; }
 .d4 { animation-delay: 0.22s; } .d45 { animation-delay: 0.27s; } .d5 { animation-delay: 0.30s; }
 .d5b { animation-delay: 0.34s; } .d55 { animation-delay: 0.40s; } .d6 { animation-delay: 0.46s; } .d7 { animation-delay: 0.52s; }
+.d7b { animation-delay: 0.58s; } .d7c { animation-delay: 0.64s; } .d7d { animation-delay: 0.70s; }
 
 .err { color: var(--negative); font-size: 13px; padding: 40px 0; text-align: center; }
 
