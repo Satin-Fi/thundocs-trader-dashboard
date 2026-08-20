@@ -25,6 +25,8 @@ import signal
 import subprocess
 import threading
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+
 # Load local .env (gitignored) so VERCEL_TOKEN survives restarts without
 # needing a global env var. Format: VERCEL_TOKEN=vcp_xxx
 try:
@@ -37,7 +39,6 @@ try:
 except FileNotFoundError:
     pass
 
-HERE = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.join(HERE, "..", "frontend")
 CONFIG_JS = os.path.join(FRONTEND_DIR, "public", "config.js")
 VERCEL_JSON = os.path.join(FRONTEND_DIR, "vercel.json")
