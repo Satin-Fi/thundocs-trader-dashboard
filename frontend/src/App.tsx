@@ -509,7 +509,7 @@ export default function App() {
             {backtest ? (
               <div>
                 <div className="hint" style={{ marginBottom: 8 }}>{backtest.symbol} · {backtest.interval} · {backtest.days}d · best first</div>
-                {backtest.results.map((r, i) => (
+                {backtest.results.map((r) => (
                   <div className="bar-row" key={r.strategy}>
                     <span className="bar-label">{r.strategy}</span>
                     <span className="bar-track"><span className={`bar-fill ${r.ret < 0 ? 'neg' : ''}`} style={{ width: `${Math.max(4, Math.min(100, (r.ret + 20) * 2))}%` }} /></span>
