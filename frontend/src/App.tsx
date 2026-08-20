@@ -187,6 +187,8 @@ export default function App() {
 
   return (
     <div className="shell">
+      <div className="aurora"><i /></div>
+      <div className="grain" />
       <div className="topbar">
         <div className="brand">
           <div className="mark">

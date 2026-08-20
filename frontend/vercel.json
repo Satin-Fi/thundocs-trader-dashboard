@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://registry-antique-endorsement-limousines.trycloudflare.com/api/:path*"
+      "destination": "https://flag-scripts-hrs-med.trycloudflare.com/api/:path*"
     }
   ]
 }
