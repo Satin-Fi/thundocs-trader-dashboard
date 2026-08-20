@@ -747,6 +747,77 @@ def portfolio_analytics(fills, price):
     }
 
 # ---------------------------------------------------------------------------
+# Performance analytics: reconstruct round-trips from the fills ledger and
+# compute win-rate / profit-factor / drawdown / per-strategy P&L. Pure function
+# of the fills log — no live calls, safe to hit every few seconds.
+# ---------------------------------------------------------------------------
+def round_trips(fills):
+    """Pair BUY->SELL fills into round-trips. Returns list of
+    {entry_t, exit_t, entry_px, exit_px, qty, pnl, pnl_pct}."""
+    trips = []
+    open_buy = None
+    for f in fills:
+        if f["side"] == "BUY":
+            open_buy = f
+        elif f["side"] == "SELL" and open_buy is not None:
+            qty = float(open_buy["qty"])
+            ep, xp = float(open_buy["price"]), float(f["price"])
+            pnl = (xp - ep) * qty
+            trips.append({
+                "entry_t": open_buy["t"], "exit_t": f["t"],
+                "entry_px": ep, "exit_px": xp, "qty": qty,
+                "pnl": round(pnl, 2), "pnl_pct": round((xp / ep - 1) * 100, 2),
+            })
+            open_buy = None
+    return trips
+
+def compute_analytics(fills):
+    trips = round_trips(fills)
+    if not trips:
+        return {"round_trips": 0, "wins": 0, "losses": 0, "win_rate": 0.0,
+                "profit_factor": 0.0, "avg_win": 0.0, "avg_loss": 0.0,
+                "avg_hold_min": 0.0, "max_drawdown": 0.0, "expectancy": 0.0,
+                "largest_win": 0.0, "largest_loss": 0.0,
+                "per_strategy": {}}
+    wins = [t for t in trips if t["pnl"] >= 0]
+    losses = [t for t in trips if t["pnl"] < 0]
+    gross_win = sum(t["pnl"] for t in wins)
+    gross_loss = -sum(t["pnl"] for t in losses)
+    wr = (len(wins) / len(trips)) * 100
+    pf = round(gross_win / gross_loss, 2) if gross_loss > 0 else (round(gross_win, 2) if gross_win > 0 else 0.0)
+    # equity curve from trips to derive drawdown
+    eq = 0.0; peak = 0.0; mdd = 0.0
+    for t in trips:
+        eq += t["pnl"]
+        peak = max(peak, eq)
+        mdd = min(mdd, eq - peak)
+    # average hold time (minutes)
+    holds = []
+    for t in trips:
+        try:
+            a = dt.datetime.fromisoformat(t["entry_t"].replace("Z", ""))
+            b = dt.datetime.fromisoformat(t["exit_t"].replace("Z", ""))
+            holds.append((b - a).total_seconds() / 60.0)
+        except Exception:
+            pass
+    avg_hold = sum(holds) / len(holds) if holds else 0.0
+    expectancy = (wr/100) * (gross_win/len(wins)) - ((100-wr)/100) * (gross_loss/len(losses)) if wins and losses else 0.0
+    return {
+        "round_trips": len(trips),
+        "wins": len(wins), "losses": len(losses),
+        "win_rate": round(wr, 1),
+        "profit_factor": pf,
+        "avg_win": round(gross_win/len(wins), 2) if wins else 0.0,
+        "avg_loss": round(-gross_loss/len(losses), 2) if losses else 0.0,
+        "avg_hold_min": round(avg_hold, 1),
+        "max_drawdown": round(-mdd, 2),
+        "expectancy": round(expectancy, 2),
+        "largest_win": round(max(t["pnl"] for t in trips), 2),
+        "largest_loss": round(min(t["pnl"] for t in trips), 2),
+        "per_strategy": {},  # reserved; strategy tagging needs strategy in fill log
+    }
+
+# ---------------------------------------------------------------------------
 # Self-improvement: evaluate BOTH strategy classes (reversion + breakout) over
 # recent data with walk-forward (train 70% / test 30% out-of-sample), then switch
 # the active strategy+params to the best out-of-sample performer. Avoids
