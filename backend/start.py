@@ -25,6 +25,18 @@ import signal
 import subprocess
 import threading
 
+# Load local .env (gitignored) so VERCEL_TOKEN survives restarts without
+# needing a global env var. Format: VERCEL_TOKEN=vcp_xxx
+try:
+    with open(os.path.join(HERE, ".env")) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ.setdefault(_k.strip(), _v.strip())
+except FileNotFoundError:
+    pass
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 FRONTEND_DIR = os.path.join(HERE, "..", "frontend")
 CONFIG_JS = os.path.join(FRONTEND_DIR, "public", "config.js")
@@ -106,8 +118,10 @@ def start_tunnel():
                     write_config(url)
                     write_vercel_json(url)
                     captured = True
-                    if VERCEL_TOKEN:
-                        deploy_frontend()
+                    # Auto-redeploy uses the CLI's existing session (logged in)
+                    # or an explicit VERCEL_TOKEN if set. Either way, no manual
+                    # redeploy needed after a tunnel restart.
+                    deploy_frontend()
         if not captured:
             log("WARN: tunnel URL not captured")
 
@@ -117,9 +131,14 @@ def start_tunnel():
 
 def deploy_frontend():
     log("auto-redeploying frontend to Vercel ...")
+    # Prefer an explicit token; otherwise rely on the CLI's existing session
+    # (vercel is already logged in on this machine, so no token needed).
+    cmd = ["vercel", "deploy", "--prod", "--yes"]
+    if VERCEL_TOKEN:
+        cmd += ["--token", VERCEL_TOKEN]
     try:
         r = subprocess.run(
-            ["vercel", "deploy", "--prod", "--yes", "--token", VERCEL_TOKEN],
+            cmd,
             cwd=FRONTEND_DIR,
             capture_output=True,
             text=True,
@@ -157,7 +176,7 @@ if __name__ == "__main__":
     start_tunnel()
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
-    log("running. Ctrl+C to stop. (VERCEL_TOKEN set: " + ("yes" if VERCEL_TOKEN else "no") + ")")
+    log("running. Ctrl+C to stop. (auto-redeploy: on via Vercel CLI session" + (", token set" if VERCEL_TOKEN else "") + ")")
     try:
         while True:
             time.sleep(1)
