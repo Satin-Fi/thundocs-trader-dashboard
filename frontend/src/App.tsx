@@ -20,6 +20,7 @@ export default function App() {
   const [settings, setSettingsState] = useState<Settings | null>(null)
   const [capInput, setCapInput] = useState('')
   const [capSaving, setCapSaving] = useState(false)
+  const [capError, setCapError] = useState('')
   const [analytics, setAnalytics] = useState<Analytics | null>(null)
   const [backtest, setBacktest] = useState<Backtest | null>(null)
   const [btDays, setBtDays] = useState(30)
@@ -165,6 +166,12 @@ export default function App() {
   const saveCapital = async () => {
     const v = parseFloat(capInput)
     if (!(v > 0)) return
+    const floor = settings?.size_min ?? 10
+    if (v < floor) {
+      setCapError(`Minimum order on Binance is $${floor.toFixed(0)} — set a limit at or above that to trade.`)
+      return
+    }
+    setCapError('')
     setCapSaving(true)
     try {
       const r = await setSettings(v)
@@ -404,20 +411,25 @@ export default function App() {
               <input
                 className="cap-input"
                 type="number"
-                min="1"
+                min={settings?.size_min ?? 10}
                 step="1"
                 value={capInput}
-                onChange={(e) => setCapInput(e.target.value)}
+                onChange={(e) => { setCapInput(e.target.value); if (capError) setCapError('') }}
                 disabled={capSaving}
               />
               <button className="cap-btn" onClick={saveCapital} disabled={capSaving || !capInput}>
                 {capSaving ? 'saving…' : 'Set'}
               </button>
             </div>
+            {capError ? (
+              <div className="cap-note" style={{ color: 'var(--neg)', marginTop: 8 }}>{capError}</div>
+            ) : (
             <div className="cap-note">
               Current limit: <b>${settings ? settings.max_capital.toFixed(2) : '—'}</b>
               {state ? ` · available USDT: $${state.usdt.toFixed(2)}` : ''}
+              {settings && settings.max_capital < (settings.size_min ?? 10) ? ` · ⚠ below Binance min $${(settings.size_min ?? 10).toFixed(0)} — bot will hold` : ''}
             </div>
+            )}
           </div>
 
           {state.tune && (

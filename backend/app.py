@@ -638,19 +638,27 @@ def tick():
             eg = backtest_closes(recent, STRATEGY, p)
             edge_ok = bool(eg and eg["ret"] > 0 and eg["trades"] >= 1)
             if sig == "BUY" and edge_ok and usdt >= SIZE_MIN:
-                notional = min(MAX_NOTIONAL, MAX_CAPITAL, usdt*0.95)
-                # MARKET BUY by quote: Binance computes qty from USDT spent.
-                # Avoids manual qty rounding that triggered Binance -1013.
-                o = signed("/order", {"symbol":SYMBOL,"side":"BUY","type":"MARKET",
-                                      "quoteOrderQty": round(notional, 2)}, "POST")
-                if isinstance(o, dict) and o.get("orderId"):
-                    # derive executed qty/price from the fill for the ledger
-                    ex = (o.get("fills") or [{}])[0]
-                    qty = float(ex.get("qty", 0)); fill_px = float(ex.get("price", price))
-                    bqty = fmt_qty(qty) if qty > 0 else fmt_qty(notional/price)
-                    log(f"BUY[{STRATEGY}] qty={bqty} @ {fill_px:.2f} ({reason}) edge={eg['ret']:.1f}% -> {o['orderId']}")
-                    record_fill("BUY", bqty, fill_px, o["orderId"])
-                else: log(f"BUY FAILED {o}")
+                # Respect the user's capital limit as the hard ceiling, but never
+                # more than 95% of available USDT. SIZE_MIN is Binance's floor —
+                # below it a MARKET order is rejected, so we gate on it above.
+                notional = min(MAX_CAPITAL, usdt*0.95)
+                if notional < SIZE_MIN:
+                    notional = 0.0  # would be rejected by Binance; stay flat
+                if notional >= SIZE_MIN:
+                    # MARKET BUY by quote: Binance computes qty from USDT spent.
+                    # Avoids manual qty rounding that triggered Binance -1013.
+                    o = signed("/order", {"symbol":SYMBOL,"side":"BUY","type":"MARKET",
+                                          "quoteOrderQty": round(notional, 2)}, "POST")
+                    if isinstance(o, dict) and o.get("orderId"):
+                        # derive executed qty/price from the fill for the ledger
+                        ex = (o.get("fills") or [{}])[0]
+                        qty = float(ex.get("qty", 0)); fill_px = float(ex.get("price", price))
+                        bqty = fmt_qty(qty) if qty > 0 else fmt_qty(notional/price)
+                        log(f"BUY[{STRATEGY}] qty={bqty} @ {fill_px:.2f} ({reason}) edge={eg['ret']:.1f}% -> {o['orderId']}")
+                        record_fill("BUY", bqty, fill_px, o["orderId"])
+                    else: log(f"BUY FAILED {o}")
+                else:
+                    log(f"HOLD — limit ${MAX_CAPITAL:.2f} below Binance min ${SIZE_MIN:.2f}; raise limit to trade")
             else:
                 log(f"HOLD (flat) [{STRATEGY}] sig={sig} edge_ok={edge_ok} ({reason})")
         else:

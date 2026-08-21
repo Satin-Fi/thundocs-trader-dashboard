@@ -48,7 +48,10 @@ CF_BIN = os.path.join(os.path.expanduser("~"), "cloudflared.exe")
 if not os.path.exists(CF_BIN):
     CF_BIN = "cloudflared"  # fall back to PATH
 
-URL_RE = re.compile(r"https://([a-z0-9-]+\.trycloudflare\.com)")
+URL_RE = re.compile(r"https://([a-z0-9]+(?:-[a-z0-9]+)+\.trycloudflare\.com)")
+# Real quick-tunnel URLs always contain a hyphen (e.g. zinc-find-having.trycloudflare.com).
+# The API host "api.trycloudflare.com" has NO hyphen, so it will never match above.
+API_HOST = "api.trycloudflare.com"
 
 procs = []
 
@@ -73,7 +76,11 @@ def write_config(url):
 
 
 def write_vercel_json(url):
-    """Keep the Vercel proxy rewrite pointed at the live tunnel URL."""
+    """Keep the Vercel proxy rewrite pointed at the live tunnel URL.
+    Guard: never accept the Cloudflare API host (it appears in error lines)."""
+    if not url or API_HOST in url or "api.trycloudflare" in url:
+        log("WARN: refusing to write bogus tunnel URL: " + str(url))
+        return
     try:
         cfg = {"rewrites": [{"source": "/api/:path*",
                              "destination": f"https://{url}/api/:path*"}]}
@@ -123,8 +130,20 @@ def start_tunnel():
                     # or an explicit VERCEL_TOKEN if set. Either way, no manual
                     # redeploy needed after a tunnel restart.
                     deploy_frontend()
-        if not captured:
-            log("WARN: tunnel URL not captured")
+        # Tunnel process died (DNS blip / cloudflared crash). Supervise it:
+        # restart after a short backoff so the dashboard auto-heals.
+        log("WARN: tunnel process exited — restarting in 5s ...")
+        try:
+            p.wait(timeout=1)
+        except Exception:
+            pass
+        time.sleep(5)
+        # remove the dead proc reference and relaunch
+        try:
+            procs.remove(p)
+        except ValueError:
+            pass
+        start_tunnel()
 
     threading.Thread(target=watch, daemon=True).start()
     return p
@@ -132,15 +151,16 @@ def start_tunnel():
 
 def deploy_frontend():
     log("auto-redeploying frontend to Vercel ...")
-    # Prefer an explicit token; otherwise rely on the CLI's existing session
-    # (vercel is already logged in on this machine, so no token needed).
-    cmd = ["vercel", "deploy", "--prod", "--yes"]
+    # Use shell=True so Windows resolves the vercel.cmd shim; this also fixes
+    # "[WinError 2] The system cannot find the file specified" from before.
+    cmd = "vercel deploy --prod --yes"
     if VERCEL_TOKEN:
-        cmd += ["--token", VERCEL_TOKEN]
+        cmd += f" --token {VERCEL_TOKEN}"
     try:
         r = subprocess.run(
             cmd,
             cwd=FRONTEND_DIR,
+            shell=True,
             capture_output=True,
             text=True,
             timeout=300,

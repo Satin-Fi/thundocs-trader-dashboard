@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://engine-modified-excellence-adding.trycloudflare.com/api/:path*"
+      "destination": "https://government-luke-olympus-regulatory.trycloudflare.com/api/:path*"
     }
   ]
 }
