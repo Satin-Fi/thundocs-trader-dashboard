@@ -2,8 +2,7 @@ export interface State {
   symbol: string
   price: number
   usdt: number
-  btc_open: number
-  open_value: number
+  
   realized: number
   net_pnl: number
   total_funds: number
@@ -26,20 +25,7 @@ export interface State {
   strategy: string
   strategy_params: Record<string, number>
   last_exit: { reason: string; price: number; t: string } | null
-  position: {
-    side: string
-    entry: number
-    qty: number
-    mark_price: number
-    unrealized_pnl: number
-    unrealized_pct: number
-    stop_loss: number
-    take_profit: number
-    risk: number
-    reward: number
-    rr: number
-    opened_at: string | null
-  } | null
+  positions: { symbol: string; side: string; entry: number; qty: number; mark_price: number; unrealized_pnl: number; unrealized_pct: number; stop_loss?: number; take_profit?: number; risk?: number; reward?: number; rr?: number }[]
   tune: {
     ts: string
     method: string
@@ -48,7 +34,14 @@ export interface State {
     applied: boolean
     candidates: { strategy: string; params: Record<string, number>; train_ret: number; test_ret: number; trades: number; win_rate: number }[]
   } | null
+  max_capital: number
+  regime: string
+  regime_score: number
+  atr: number
+  trailing_stop: number | null
+  manual_state?: { auto_manage?: boolean; sl?: number | string; tp?: number | string }
   updated: string
+  pnl_by_actor?: any
 }
 
 export interface Kline {
@@ -69,8 +62,10 @@ export interface Klines {
 
 export interface Fill {
   t: string
+  symbol: string
   side: 'BUY' | 'SELL'
-  qty: number
-  price: number
+  qty: number | string
+  price: number | string
   order: number | string
+  actor?: string
 }

@@ -25,6 +25,17 @@ import signal
 import subprocess
 import threading
 
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Load local .env (gitignored) so VERCEL_TOKEN survives restarts without
@@ -40,8 +51,9 @@ except FileNotFoundError:
     pass
 
 FRONTEND_DIR = os.path.join(HERE, "..", "frontend")
+REPO_ROOT = os.path.join(HERE, "..")  # where the real Vercel project (.vercel/) lives
 CONFIG_JS = os.path.join(FRONTEND_DIR, "public", "config.js")
-VERCEL_JSON = os.path.join(FRONTEND_DIR, "vercel.json")
+LOCK = os.path.join(HERE, ".startpy.lock")
 PORT = os.getenv("PORT", "8000")
 VERCEL_TOKEN = os.getenv("VERCEL_TOKEN", "")
 CF_BIN = os.path.join(os.path.expanduser("~"), "cloudflared.exe")
@@ -60,39 +72,70 @@ def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
+def copy_to_clipboard(text):
+    try:
+        p = subprocess.Popen("clip", stdin=subprocess.PIPE, shell=True)
+        p.communicate(input=text.encode("utf-8"))
+    except Exception:
+        pass
+
+
 def write_config(url):
+    """Point the browser straight at the tunnel (CORS is enabled in app.py)."""
+    if not url or API_HOST in url or "api.trycloudflare" in url:
+        log("WARN: refusing to write bogus tunnel URL into config.js: " + str(url))
+        return
     try:
         content = (
-            "// Runtime config: the dashboard now talks to its OWN origin (vercel.app) and\n"
-            "// Vercel proxies /api/* to the backend tunnel (see vercel.json). This keeps the\n"
-            "// browser off the flapping Cloudflare quick-tunnel edge entirely.\n"
-            'window.__API_URL__ = "";\n'
+            "// Runtime config: browser calls the backend tunnel directly.\n"
+            'window.__API_URL__ = "https://' + url + '";\n'
         )
         with open(CONFIG_JS, "w") as f:
             f.write(content)
-        log(f"config.js updated -> same-origin proxy")
+
+        # Also write to dist/config.js if dist exists so local builds stay fresh
+        dist_cfg = os.path.join(FRONTEND_DIR, "dist", "config.js")
+        if os.path.exists(os.path.dirname(dist_cfg)):
+            with open(dist_cfg, "w") as f:
+                f.write(content)
+
+        copy_to_clipboard(f"https://{url}")
+        print("\n" + "=" * 65)
+        print(f"  ⚡ LIVE TUNNEL CONNECTED: https://{url}")
+        print(f"  📋 (Copied URL to your clipboard)")
+        print(f"  🌐 VERCEL DASHBOARD: https://thundocs-trader-dashboard.vercel.app")
+        print("=" * 65 + "\n", flush=True)
     except Exception as e:
         log(f"WARN: could not write config.js: {e}")
 
 
-def write_vercel_json(url):
-    """Keep the Vercel proxy rewrite pointed at the live tunnel URL.
-    Guard: never accept the Cloudflare API host (it appears in error lines)."""
-    if not url or API_HOST in url or "api.trycloudflare" in url:
-        log("WARN: refusing to write bogus tunnel URL: " + str(url))
-        return
+def clear_port(port):
+    """Kill any process holding the given TCP port (Windows + fallback)."""
     try:
-        cfg = {"rewrites": [{"source": "/api/:path*",
-                             "destination": f"https://{url}/api/:path*"}]}
-        with open(VERCEL_JSON, "w") as f:
-            json.dump(cfg, f, indent=2)
-        log(f"vercel.json proxy -> {url}")
+        import ctypes
+        # Use netstat -ano to find PIDs holding the port
+        r = subprocess.run(
+            ["netstat", "-ano"],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in r.stdout.splitlines():
+            if f":{port} " in line and ("LISTENING" in line or "ESTABLISHED" in line):
+                parts = line.split()
+                pid = int(parts[-1])
+                if pid and pid != os.getpid():
+                    try:
+                        subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                                       capture_output=True, timeout=3)
+                        log(f"Cleared PID {pid} from port {port}")
+                    except Exception:
+                        pass
     except Exception as e:
-        log(f"WARN: could not write vercel.json: {e}")
+        log(f"WARN: could not clear port {port}: {e}")
 
 
-def start_backend():
-    p = subprocess.Popen(
+def _start_backend_proc():
+    """Spawn a single app.py process and return it."""
+    return subprocess.Popen(
         [sys.executable, "app.py"],
         cwd=HERE,
         env={**os.environ, "PORT": PORT},
@@ -100,8 +143,37 @@ def start_backend():
         stderr=subprocess.STDOUT,
         text=True,
     )
+
+
+_backend_lock = threading.Lock()
+
+
+def start_backend():
+    """Start app.py and launch a watchdog that restarts it if it crashes."""
+    clear_port(int(PORT))
+    time.sleep(0.5)
+    p = _start_backend_proc()
     procs.append(p)
     threading.Thread(target=_pipe, args=(p, "backend"), daemon=True).start()
+
+    def watchdog():
+        proc = p
+        while True:
+            ret = proc.wait()
+            log(f"WARN: backend exited (code {ret}) — restarting in 3s ...")
+            time.sleep(3)
+            with _backend_lock:
+                clear_port(int(PORT))
+                time.sleep(0.5)
+                proc = _start_backend_proc()
+                try:
+                    procs.remove(p)
+                except ValueError:
+                    pass
+                procs.append(proc)
+            threading.Thread(target=_pipe, args=(proc, "backend"), daemon=True).start()
+
+    threading.Thread(target=watchdog, daemon=True).start()
     return p
 
 
@@ -124,21 +196,16 @@ def start_tunnel():
                 if m:
                     url = m.group(1)
                     write_config(url)
-                    write_vercel_json(url)
                     captured = True
-                    # Auto-redeploy uses the CLI's existing session (logged in)
-                    # or an explicit VERCEL_TOKEN if set. Either way, no manual
-                    # redeploy needed after a tunnel restart.
-                    deploy_frontend()
-        # Tunnel process died (DNS blip / cloudflared crash). Supervise it:
-        # restart after a short backoff so the dashboard auto-heals.
+                    # Auto-redeploy in a background thread so log streaming never pauses
+                    threading.Thread(target=deploy_frontend, daemon=True).start()
+        # Tunnel process died. Supervise it:
         log("WARN: tunnel process exited — restarting in 5s ...")
         try:
             p.wait(timeout=1)
         except Exception:
             pass
         time.sleep(5)
-        # remove the dead proc reference and relaunch
         try:
             procs.remove(p)
         except ValueError:
@@ -150,25 +217,37 @@ def start_tunnel():
 
 
 def deploy_frontend():
-    log("auto-redeploying frontend to Vercel ...")
-    # Use shell=True so Windows resolves the vercel.cmd shim; this also fixes
-    # "[WinError 2] The system cannot find the file specified" from before.
-    cmd = "vercel deploy --prod --yes"
-    if VERCEL_TOKEN:
-        cmd += f" --token {VERCEL_TOKEN}"
+    log("Rebuilding & syncing live Vercel production deployment in background...")
     try:
-        r = subprocess.run(
-            cmd,
+        b = subprocess.run(
+            "npm run build",
             cwd=FRONTEND_DIR,
             shell=True,
             capture_output=True,
             text=True,
             timeout=300,
         )
+        if b.returncode != 0:
+            log("WARN: npm run build failed: " + b.stderr.strip()[:300])
+    except Exception as e:
+        log(f"WARN: build error: {e}")
+    cmd = "vercel deploy --prod --yes"
+    if VERCEL_TOKEN:
+        cmd += f" --token {VERCEL_TOKEN}"
+    try:
+        r = subprocess.run(
+            cmd,
+            cwd=REPO_ROOT,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
         if r.returncode == 0:
-            log("frontend redeployed: " + (r.stdout.strip().splitlines()[-1] if r.stdout.strip() else "ok"))
+            deployed_url = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else "ok"
+            log(f"✓ Vercel frontend live synced: {deployed_url}")
         else:
-            log("WARN: vercel deploy failed: " + r.stderr.strip()[:300])
+            log("WARN: vercel deploy returned: " + r.stderr.strip()[:300])
     except Exception as e:
         log(f"WARN: deploy error: {e}")
 
@@ -185,15 +264,40 @@ def shutdown(*a):
             p.terminate()
         except Exception:
             pass
+    try:
+        os.remove(LOCK)
+    except Exception:
+        pass
     sys.exit(0)
 
 
 if __name__ == "__main__":
+    # Singleton guard via a lock file (reliable on Windows). Refuses to
+    # start if the lock exists and points at a live PID, preventing stacked
+    # orphan+manual instances that each spawn their own app.py + cloudflared
+    # (which caused port conflicts and the dashboard flapping).
+    try:
+        if os.path.exists(LOCK):
+            try:
+                old_pid = int(open(LOCK).read().strip())
+            except Exception:
+                old_pid = None
+            if old_pid and old_pid != os.getpid():
+                try:
+                    os.kill(old_pid, 0)  # raises if PID not alive (Windows)
+                    log(f"REFUSING: another start.py already running (PID {old_pid}). "
+                        f"Kill it or delete {LOCK} first.")
+                    sys.exit(1)
+                except OSError:
+                    pass  # stale lock, ignore and overwrite
+        with open(LOCK, "w") as _lf:
+            _lf.write(str(os.getpid()))
+    except Exception:
+        pass  # best effort
+
     log(f"starting Paper Trader (backend :{PORT} + tunnel)")
-    if not os.path.exists(CF_BIN):
-        log("WARN: cloudflared not found at " + CF_BIN + " — tunnel will not start")
     start_backend()
-    time.sleep(3)
+    time.sleep(2)
     start_tunnel()
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)

@@ -7,11 +7,12 @@ interface Props {
   fmt: (n: number) => string
   tone?: 'auto' | 'pos' | 'neg' | 'plain'
   spark?: number[]
+  sub?: string
 }
 
 function Sparkline({ data }: { data: number[] }) {
-  if (data.length < 2) return <div className="spark" />
-  const w = 120, h = 26, pad = 2
+  if (data.length < 2) return <div className="kpi-spark" />
+  const w = 120, h = 20, pad = 2
   const min = Math.min(...data), max = Math.max(...data)
   const span = max - min || 1
   const pts = data.map((v, i) => {
@@ -21,13 +22,13 @@ function Sparkline({ data }: { data: number[] }) {
   }).join(' ')
   const up = data[data.length - 1] >= data[0]
   return (
-    <svg className="spark" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
-      <polyline points={pts} fill="none" stroke={up ? 'var(--accent)' : 'var(--negative)'} strokeWidth="1.5" opacity="0.8" />
+    <svg className="kpi-spark" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
+      <polyline points={pts} fill="none" stroke={up ? 'var(--accent)' : 'var(--negative)'} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.85" />
     </svg>
   )
 }
 
-export default function Kpi({ label, value, fmt, tone = 'auto', spark }: Props) {
+export default function Kpi({ label, value, fmt, tone = 'auto', spark, sub }: Props) {
   const display = useCountUp(value)
   const prev = useRef(value)
   const [flash, setFlash] = useState('')
@@ -43,10 +44,15 @@ export default function Kpi({ label, value, fmt, tone = 'auto', spark }: Props) 
   }, [value])
 
   return (
-    <div className="kpi rise d3">
-      <div className="label">{label}</div>
-      <div className={`value ${cls} ${flash}`}>{fmt(display)}</div>
-      <Sparkline data={spark ?? []} />
+    <div className="card-bezel rise d2">
+      <div className="card-inner kpi-card">
+        <div>
+          <div className="kpi-label">{label}</div>
+          <div className={`kpi-value ${cls} ${flash}`}>{fmt(display)}</div>
+          {sub && <div style={{ fontSize: 11, color: 'var(--faint)', fontFamily: 'var(--mono)' }}>{sub}</div>}
+        </div>
+        <Sparkline data={spark ?? []} />
+      </div>
     </div>
   )
 }

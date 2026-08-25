@@ -58,29 +58,29 @@ export default function PriceChart({ klines, fills, position, livePrice, interva
     try {
       const chart = createChart(el, {
         autoSize: true, height: 440,
-        layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#aeb4c0', fontFamily: 'Inter, system-ui, sans-serif' },
-        grid: { vertLines: { color: 'rgba(255,255,255,0.05)' }, horzLines: { color: 'rgba(255,255,255,0.05)' } },
+        layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#8492a6', fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" },
+        grid: { vertLines: { color: 'rgba(255,255,255,0.035)' }, horzLines: { color: 'rgba(255,255,255,0.035)' } },
         crosshair: { mode: 0 },
         rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)' },
         timeScale: { borderColor: 'rgba(255,255,255,0.08)', timeVisible: true, secondsVisible: false },
         handleScale: true, handleScroll: true,
       })
-      const candle = chart.addCandlestickSeries({ upColor: '#00d992', downColor: '#fb565b', borderUpColor: '#00d992', borderDownColor: '#fb565b', wickUpColor: '#00d992', wickDownColor: '#fb565b' })
+      const candle = chart.addCandlestickSeries({ upColor: '#00F5A0', downColor: '#FF3B5C', borderUpColor: '#00F5A0', borderDownColor: '#FF3B5C', wickUpColor: '#00F5A0', wickDownColor: '#FF3B5C' })
       const vol = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'vol' })
       try { chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } }) } catch {}
 
       // RSI sub-chart (created on a mounted ref div so autoSize can measure it)
-      const rsiChart = createChart(rsiWrapRef.current!, { autoSize: true, height: 120, layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#aeb4c0' }, grid: { vertLines: { color: 'rgba(255,255,255,0.04)' }, horzLines: { color: 'rgba(255,255,255,0.04)' } }, rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)' }, timeScale: { borderColor: 'rgba(255,255,255,0.08)', timeVisible: true, secondsVisible: false }, handleScale: false, handleScroll: true })
-      const rsi = rsiChart.addLineSeries({ color: '#a78bfa', lineWidth: 2, priceFormat: { type: 'custom', formatter: (p: number) => p.toFixed(0) } })
+      const rsiChart = createChart(rsiWrapRef.current!, { autoSize: true, height: 120, layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#8492a6', fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }, grid: { vertLines: { color: 'rgba(255,255,255,0.03)' }, horzLines: { color: 'rgba(255,255,255,0.03)' } }, rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)' }, timeScale: { borderColor: 'rgba(255,255,255,0.08)', timeVisible: true, secondsVisible: false }, handleScale: false, handleScroll: true })
+      const rsi = rsiChart.addLineSeries({ color: '#A78BFA', lineWidth: 2, priceFormat: { type: 'custom', formatter: (p: number) => p.toFixed(0) } })
       // RSI 30/70 guides
-      rsi.createPriceLine({ price: 70, color: 'rgba(251,86,91,0.35)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: '70' })
-      rsi.createPriceLine({ price: 30, color: 'rgba(0,217,146,0.35)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: '30' })
+      rsi.createPriceLine({ price: 70, color: 'rgba(255,59,92,0.4)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: '70' })
+      rsi.createPriceLine({ price: 30, color: 'rgba(0,245,160,0.4)', lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false, title: '30' })
 
       // MACD sub-chart
-      const macdChart = createChart(macdWrapRef.current!, { autoSize: true, height: 120, layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#aeb4c0' }, grid: { vertLines: { color: 'rgba(255,255,255,0.04)' }, horzLines: { color: 'rgba(255,255,255,0.04)' } }, rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)' }, timeScale: { borderColor: 'rgba(255,255,255,0.08)', timeVisible: true, secondsVisible: false }, handleScale: false, handleScroll: true })
+      const macdChart = createChart(macdWrapRef.current!, { autoSize: true, height: 120, layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#8492a6', fontFamily: "'Plus Jakarta Sans', system-ui, sans-serif" }, grid: { vertLines: { color: 'rgba(255,255,255,0.03)' }, horzLines: { color: 'rgba(255,255,255,0.03)' } }, rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)' }, timeScale: { borderColor: 'rgba(255,255,255,0.08)', timeVisible: true, secondsVisible: false }, handleScale: false, handleScroll: true })
       const macdHist = macdChart.addHistogramSeries({ priceFormat: { type: 'custom', formatter: (p: number) => p.toFixed(0) } })
-      const macdLine = macdChart.addLineSeries({ color: '#4ea8ff', lineWidth: 2 })
-      const macdSig = macdChart.addLineSeries({ color: '#facc15', lineWidth: 2 })
+      const macdLine = macdChart.addLineSeries({ color: '#38BDF8', lineWidth: 2 })
+      const macdSig = macdChart.addLineSeries({ color: '#FBBF24', lineWidth: 2 })
 
       chartRef.current = chart; candleRef.current = candle; volRef.current = vol
       rsiChartRef.current = rsiChart; rsiRef.current = rsi
@@ -100,22 +100,22 @@ export default function PriceChart({ klines, fills, position, livePrice, interva
     try {
       const t = (k: Kline): UTCTimestamp => (k.t / 1000) as UTCTimestamp
       candle.setData(klines.map(k => ({ time: t(k), open: k.o, high: k.h, low: k.l, close: k.c })))
-      vol.setData(klines.map(k => ({ time: t(k), value: k.v, color: k.c >= k.o ? 'rgba(0,217,146,0.4)' : 'rgba(251,86,91,0.4)' })))
+      vol.setData(klines.map(k => ({ time: t(k), value: k.v, color: k.c >= k.o ? 'rgba(0,245,160,0.35)' : 'rgba(255,59,92,0.35)' })))
       const markers: SeriesMarker<Time>[] = fills.filter(f => (f.side === 'BUY' || f.side === 'SELL') && f.t).map(f => ({
         time: (Date.parse(f.t) / 1000) as UTCTimestamp,
         position: (f.side === 'BUY' ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
-        color: f.side === 'BUY' ? '#00d992' : '#fb565b',
+        color: f.side === 'BUY' ? '#00F5A0' : '#FF3B5C',
         shape: (f.side === 'BUY' ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown',
-        text: f.side === 'BUY' ? 'B' : 'S',
+        text: f.side === 'BUY' ? 'BUY' : 'SELL',
       }))
       candle.setMarkers(markers)
       slLinesRef.current.forEach(l => { try { candle.removePriceLine(l) } catch {} })
       slLinesRef.current = []
       if (position) {
-        const add = (price: number, color: string, title: string) => slLinesRef.current.push(candle.createPriceLine({ price, color, lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title }))
-        add(position.entry, '#22d3ee', 'ENTRY')
-        add(position.stop_loss, '#f43f5e', 'SL')
-        add(position.take_profit, '#facc15', 'TP')
+        const add = (price: number, color: string, title: string) => slLinesRef.current.push(candle.createPriceLine({ price, color, lineWidth: 2, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title }))
+        add(position.entry, '#38BDF8', 'ENTRY')
+        add(position.stop_loss, '#FF3B5C', 'SL')
+        add(position.take_profit, '#00F5A0', 'TP')
       }
       if (shownInterval.current !== interval) { chart.timeScale().fitContent(); shownInterval.current = interval }
     } catch (e) {
@@ -157,11 +157,11 @@ export default function PriceChart({ klines, fills, position, livePrice, interva
           const isS = z.type === 'S'
           srLinesRef.current.push(candle.createPriceLine({
             price: z.level,
-            color: isS ? 'rgba(0,217,146,0.55)' : 'rgba(251,86,91,0.55)',
+            color: isS ? 'rgba(0, 245, 160, 0.65)' : 'rgba(255, 59, 92, 0.65)',
             lineWidth: z.strength >= 6 ? 3 : z.strength >= 3 ? 2 : 1,
             lineStyle: LineStyle.Dotted,
             axisLabelVisible: true,
-            title: `${isS ? 'S' : 'R'} ${z.level.toFixed(0)}`,
+            title: `${isS ? 'SUP' : 'RES'} ${z.level.toFixed(0)}`,
           }))
         }
       }

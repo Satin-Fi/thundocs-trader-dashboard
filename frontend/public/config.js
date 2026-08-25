@@ -1,4 +1,2 @@
-// Runtime config: the dashboard now talks to its OWN origin (vercel.app) and
-// Vercel proxies /api/* to the backend tunnel (see vercel.json). This keeps the
-// browser off the flapping Cloudflare quick-tunnel edge entirely.
-window.__API_URL__ = "";
+// Runtime config: browser calls the backend tunnel directly.
+window.__API_URL__ = "https://lynn-floor-handbags-islands.trycloudflare.com";

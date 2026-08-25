@@ -19,4 +19,18 @@ __pycache__/
 *.pyc
 backend/fills.jsonl
 
+# runtime lock (singleton guard)
+backend/.startpy.lock
+
+# scratch / dev iteration files (patch_*.py, patch_*.tsx, rewrite.py, etc.)
+backend/patch*.py
+backend/tick_patch*.py
+backend/rewrite.py
+backend/migrate.py
+backend/test_prices.py
+backend/patch_global.py
+backend/patch_manual.py
+frontend/patch*.py
+frontend/patch_*.tsx
+
 .vercel

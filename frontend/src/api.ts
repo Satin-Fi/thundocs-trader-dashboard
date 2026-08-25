@@ -19,29 +19,43 @@ export interface Indicators {
   strategy_params: Record<string, number>
 }
 
-// API base is set at runtime by /config.js (window.__API_URL__), which Vercel
-// serves verbatim. An EMPTY string there means "talk to my own origin" — Vercel
-// proxies /api/* to the backend tunnel (see vercel.json). No build-time env,
-// no hardcoded URL, so a stale tunnel can never be baked into the bundle.
 declare global {
   interface Window { __API_URL__?: string }
 }
-const API_URL: string = (typeof window !== 'undefined' && window.__API_URL__) || ''
-// alias used by useBinancePrice for the SSE stream URL
-export const apiBase = API_URL
+
+export function getApiUrl(): string {
+  if (typeof window === 'undefined') return ''
+  try {
+    const local = localStorage.getItem('THUNDOC_API_URL')
+    if (local && local.trim()) return local.trim().replace(/\/+$/, '')
+  } catch {}
+  if (window.__API_URL__ && window.__API_URL__.trim()) {
+    return window.__API_URL__.trim().replace(/\/+$/, '')
+  }
+  return ''
+}
+
+export function setCustomApiUrl(url: string) {
+  if (typeof window === 'undefined') return
+  try {
+    if (!url || !url.trim()) {
+      localStorage.removeItem('THUNDOC_API_URL')
+    } else {
+      localStorage.setItem('THUNDOC_API_URL', url.trim().replace(/\/+$/, ''))
+    }
+  } catch {}
+}
+
+export const apiBase = getApiUrl()
 
 async function get<T>(path: string, opts?: RequestInit): Promise<T> {
+  const base = getApiUrl()
   let res: Response
   try {
-    res = await fetch(`${API_URL}${path}`, opts)
+    res = await fetch(`${base}${path}`, opts)
   } catch (e) {
-    // network-level failure (tunnel down / DNS blip) — surface as offline
     throw new Error('offline')
   }
-  // Cloudflare quick-tunnels return their own HTML error page (often as HTTP
-  // 200 text/html) when the connector is momentarily down. Don't try to JSON-
-  // parse that — treat any non-JSON body as unreachable so the UI shows the
-  // reconnect banner instead of a raw "HTTP 404".
   const ct = res.headers.get('content-type') || ''
   if (!res.ok || !ct.includes('application/json')) {
     throw new Error(res.ok ? 'tunnel unreachable' : `HTTP ${res.status}`)
@@ -62,12 +76,26 @@ export const setStrategy = (s: string) =>
   })
 export interface Settings { max_capital: number; size_min: number; max_notional: number }
 export const fetchSettings = () => get<Settings>('/api/settings')
-export const setSettings = (maxCapital: number) =>
-  get<{ ok: boolean; max_capital: number }>('/api/settings', {
+export async function setSettings(max_capital: number): Promise<{ ok: boolean, max_capital: number }> {
+  const url = getApiUrl() + '/api/settings'
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ max_capital: maxCapital }),
+    body: JSON.stringify({ max_capital })
   })
+  return res.json()
+}
+
+export async function setSymbol(symbol: string): Promise<{ ok: boolean }> {
+  const url = getApiUrl() + '/api/symbol'
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ symbol })
+  })
+  return res.json()
+}
+
 export const fetchPrice = () => get<{ price: number }>('/api/price')
 export interface Analytics {
   round_trips: number; wins: number; losses: number; win_rate: number
@@ -79,3 +107,71 @@ export const fetchAnalytics = () => get<Analytics>('/api/analytics')
 export interface BacktestRow { strategy: string; params: Record<string, number>; ret: number; win_rate: number; trades: number; wins: number; losses: number; max_dd: number }
 export interface Backtest { days: number; interval: string; symbol: string; results: BacktestRow[] }
 export const fetchBacktest = (days = 30) => get<Backtest>(`/api/backtest?days=${days}`)
+
+// ---- New: manual trading, signal, risk, strategy explainer ----
+export interface Signal {
+  signal: 'BUY' | 'SELL' | 'HOLD'
+  reason: string
+  rsi: number | null
+  regime: string | null
+  regime_score: number
+  strategy: string
+  strategy_name: string
+  price: number
+  position: string
+}
+export const fetchSignal = () => get<Signal>('/api/signal')
+
+export interface Risk {
+  trading_blocked: boolean
+  block_reasons: string[]
+  signal: string
+  regime: string
+  regime_score: number
+  rsi: number
+  atr: number | null
+  entry_risk: { sl_price: number; tp_price: number; risk_pct: number; reward_pct: number; rr: number }
+  available_usdt: number
+  flat: boolean
+}
+export const fetchRisk = () => get<Risk>('/api/risk')
+
+export interface StrategyDetail {
+  key: string
+  name: string
+  description: string
+  how_it_works: string
+  params: Record<string, number>
+  current_rsi: number | null
+  regime: string
+  regime_score: number
+  tuned: { ts: string; applied: boolean; best?: { strategy: string; test_ret?: number } } | null
+  all_strategies: Record<string, { name: string; desc: string; params: Record<string, number> }>
+}
+export const fetchStrategyDetail = () => get<StrategyDetail>('/api/strategy-detail')
+
+export interface ManualOrderResult { ok: boolean; order: string; side: string; qty: number; price: number; actor: string }
+export const postManualOrder = (side: 'BUY' | 'SELL', notional?: number, auto_manage?: boolean, sl?: number, tp?: number, symbol?: string) =>
+  get<ManualOrderResult>('/api/manual-order', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ side, notional, auto_manage, sl, tp, symbol }),
+  })
+
+export const postManualUpdate = (symbol: string, auto_manage: boolean, sl?: number, tp?: number) =>
+  get<{ ok: boolean }>('/api/manual-update', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ symbol, auto_manage, sl, tp }),
+  })
+
+export const postExitPosition = (symbol?: string) =>
+  get<{ ok: boolean; order: string; qty: number; price: number }>('/api/exit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ symbol }),
+  })
+
+export interface ScannerResult { symbol: string; rsi: number; priceChange: number; state: string; price: number }
+export const fetchScanner = () => get<{ results: ScannerResult[] }>('/api/scanner')
+

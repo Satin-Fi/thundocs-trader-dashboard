@@ -4,11 +4,14 @@ interface Props { data: Point[]; markers?: Marker[] }
 
 export default function EquityChart({ data, markers = [] }: Props) {
   if (!data || data.length < 2) {
-    return <div className="chart-wrap" style={{ display: 'grid', placeItems: 'center' }}>
-      <span className="hint">waiting for trades to draw the equity curve…</span>
-    </div>
+    return (
+      <div className="state-empty">
+        <div style={{ fontWeight: 600, color: 'var(--text-2)' }}>Insufficient execution data</div>
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>Equity curve will plot automatically as closed positions are logged</div>
+      </div>
+    )
   }
-  const w = 1000, h = 300, padL = 8, padR = 8, padT = 16, padB = 26
+  const w = 1000, h = 280, padL = 12, padR = 12, padT = 18, padB = 28
   const vals = data.map(d => d.equity)
   const min = Math.min(...vals), max = Math.max(...vals)
   const span = (max - min) || 1
@@ -41,20 +44,20 @@ export default function EquityChart({ data, markers = [] }: Props) {
       return (
         <g key={i} className="eq-marker">
           {isBuy
-            ? <path d={`M${cx},${cy - 11} l5,9 l-10,0 z`} fill="var(--accent-mint)" />
-            : <path d={`M${cx},${cy + 11} l5,-9 l-10,0 z`} fill="var(--negative)" />}
-          <circle cx={cx} cy={cy} r="3" fill={isBuy ? 'var(--accent-mint)' : 'var(--negative)'} />
+            ? <path d={`M${cx},${cy - 10} l4,7 l-8,0 z`} fill="var(--accent)" />
+            : <path d={`M${cx},${cy + 10} l4,-7 l-8,0 z`} fill="var(--negative)" />}
+          <circle cx={cx} cy={cy} r="3" fill={isBuy ? 'var(--accent)' : 'var(--negative)'} />
         </g>
       )
     })
 
   return (
-    <div className="chart-wrap">
-      <svg viewBox={`0 0 ${w} ${h}`} role="img" aria-label="Equity curve with trade markers">
+    <div style={{ position: 'relative', width: '100%' }}>
+      <svg viewBox={`0 0 ${w} ${h}`} style={{ width: '100%', height: 'auto', display: 'block', overflow: 'visible' }} role="img" aria-label="Equity curve">
         <defs>
-          <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={up ? 'rgba(0,217,146,0.18)' : 'rgba(251,86,91,0.14)'} />
-            <stop offset="100%" stopColor="rgba(0,0,0,0)" />
+          <linearGradient id="eqGradLive" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={up ? 'rgba(14, 203, 129, 0.15)' : 'rgba(246, 70, 93, 0.15)'} />
+            <stop offset="100%" stopColor="rgba(0, 0, 0, 0)" />
           </linearGradient>
         </defs>
         {Array.from({ length: ticks + 1 }).map((_, i) => {
@@ -62,20 +65,20 @@ export default function EquityChart({ data, markers = [] }: Props) {
           const gv = max - (i / ticks) * span
           return (
             <g key={i}>
-              <line className="eq-grid" x1={padL} y1={gy} x2={w - padR} y2={gy} />
-              <text className="eq-axis" x={padL + 2} y={gy - 3}>{gv.toFixed(1)}</text>
+              <line x1={padL} y1={gy} x2={w - padR} y2={gy} stroke="var(--border)" strokeWidth="1" />
+              <text x={padL + 2} y={gy - 4} fill="var(--muted)" fontSize="10" fontFamily="var(--mono)">${gv.toFixed(2)}</text>
             </g>
           )
         })}
-        <polygon className="eq-area" points={areaPts} />
-        <polyline className="eq-line" style={{ stroke }} points={linePts} />
+        <polygon fill="url(#eqGradLive)" points={areaPts} />
+        <polyline fill="none" stroke={stroke} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" points={linePts} />
         {markerEls}
-        <circle cx={x(n - 1)} cy={y(last.equity)} r="3.5" fill={stroke} style={{ filter: 'drop-shadow(0 0 6px currentColor)' }} />
+        <circle cx={x(n - 1)} cy={y(last.equity)} r="3.5" fill={stroke} />
       </svg>
       {markers.length > 0 && (
-        <div className="chart-legend">
-          <span className="lg buy">▲ buy</span>
-          <span className="lg sell">▼ sell</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, justifyContent: 'flex-end', marginTop: 10, fontSize: 11, fontFamily: 'var(--mono)' }}>
+          <span style={{ color: 'var(--accent)', fontWeight: 700 }}>▲ BUY Fill</span>
+          <span style={{ color: 'var(--negative)', fontWeight: 700 }}>▼ SELL Fill</span>
         </div>
       )}
     </div>

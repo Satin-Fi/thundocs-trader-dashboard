@@ -16,7 +16,7 @@ export default function Kpis({ s }: { s: State }) {
     <div className="grid">
       <Kpi label="Net P&L (bot)" value={`${fmt(s.net_pnl)} USDT`} cls={s.net_pnl >= 0 ? 'pos' : 'neg'} />
       <Kpi label="Realized" value={`${fmt(s.realized)} USDT`} cls={s.realized >= 0 ? 'pos' : 'neg'} />
-      <Kpi label="Open Position" value={s.btc_open > 1e-6 ? `${s.btc_open} BTC` : 'flat'} />
+      <Kpi label="Open Positions" value={s.positions?.length > 0 ? s.positions.map(p => `${p.qty} ${p.symbol.replace('USDT', '')}`).join(', ') : 'flat'} />
       <Kpi label="USDT Cash" value={usd(s.usdt)} />
     </div>
   )

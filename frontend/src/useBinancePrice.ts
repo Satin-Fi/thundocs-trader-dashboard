@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { apiBase as API_BASE } from './api'
+import { getApiUrl } from './api'
 
 /**
  * Real-time BTC price.
@@ -26,7 +26,8 @@ export function useLivePrice(symbol = 'btcusdt') {
     let alive = true
     const stream = `${symbol.toLowerCase()}@trade`
     const wsUrl = `wss://stream.binance.com:9443/ws/${stream}`
-    const sseUrl = `${API_BASE}/api/stream`
+    const apiBase = getApiUrl()
+    const sseUrl = `${apiBase}/api/stream`
 
     const startRest = () => {
       if (pollRef.current || !alive) return

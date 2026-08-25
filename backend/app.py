@@ -7,30 +7,42 @@ Endpoints:
   GET /           - optional: serve built frontend if present
 Also launches the trading loop in a background thread (RSI 15m mean-reversion, demo only).
 """
-import os, json, time, hmac, hashlib, datetime as dt, threading, urllib.request, urllib.parse
+import os, json, time, hmac, hashlib, datetime as dt, threading, urllib.request, urllib.parse, socket, sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 KEYFILE = os.path.join(HERE, "testnet_keys.json")
-FILL_LOG = os.path.join(HERE, "fills.jsonl")
 BASE = "https://demo-api.binance.com/api"
-SYMBOL = os.getenv("SYMBOL", "BTCUSDT")
 KL_INTERVAL = os.getenv("KL_INTERVAL", "15m")
 LOOP_SECONDS = int(os.getenv("LOOP_SECONDS", "900"))
 MAX_NOTIONAL = float(os.getenv("MAX_NOTIONAL", "25"))
-# MAX_CAPITAL = ceiling (USDT) the bot may deploy per trade. User-controlled
-# via the dashboard ("how much money the bot can use"). Persisted to
-# settings.json so it survives restarts. Defaults to MAX_NOTIONAL.
 SETTINGS_FILE = os.path.join(HERE, "settings.json")
-def load_max_capital():
+def load_settings():
+    d = {}
     try:
         d = json.load(open(SETTINGS_FILE))
-        if "max_capital" in d and float(d["max_capital"]) > 0:
-            return float(d["max_capital"])
     except Exception:
         pass
-    return float(os.getenv("MAX_CAPITAL", str(MAX_NOTIONAL)))
-MAX_CAPITAL = load_max_capital()
+    max_cap = float(d.get("max_capital", os.getenv("MAX_CAPITAL", str(MAX_NOTIONAL))))
+    sym = d.get("symbol", os.getenv("SYMBOL", "BTCUSDT")).upper()
+    manual = d.get("manual", {})
+    return max_cap, sym, manual
+
+MAX_CAPITAL, SYMBOL, MANUAL_STATE = load_settings()
+
+def get_fill_log():
+    return os.path.join(HERE, "fills.jsonl")
 RSI_LOW, RSI_HIGH = 45, 55   # RSI_LOW = entry RSI ceiling; RSI_HIGH = neutral exit RSI (mean-reversion target)
 # Risk / execution controls (all env-overridable, safe defaults)
 SL_PCT = float(os.getenv("SL_PCT", "0.03"))      # 3% hard stop-loss
@@ -167,50 +179,6 @@ def last_buy(fills):
             return f
     return None
 
-def _open_position(price, open_btc, fills):
-    """Describe the currently open position (if any), including stop-loss /
-    take-profit levels. SL/TP are structure-aware: TP targets the nearest
-    resistance above entry (capped at +TP_CAP), SL the nearest support below
-    (capped at -SL_CAP); falls back to fixed % if no zone is near."""
-    if open_btc <= 1e-8:
-        return None
-    fb = last_buy(fills)
-    entry = float(fb["price"]) if fb else price
-    qty = round(open_btc, 6)
-    # structure-aware targets via the bot's own S/R analysis
-    tp, sl = None, None
-    try:
-        kl = demo_get("/klines", {"symbol": SYMBOL, "interval": KL_INTERVAL, "limit": 300})
-        if isinstance(kl, list) and len(kl) >= 20:
-            highs = [float(k[2]) for k in kl]; lows = [float(k[3]) for k in kl]
-            closes_k = [float(k[4]) for k in kl]; vols_k = [float(k[5]) for k in kl]
-            zones = sr_zones(highs, lows, closes_k, vols_k)
-            res = min((z["level"] for z in zones if z["type"] == "R" and z["level"] > entry), default=None)
-            sup = max((z["level"] for z in zones if z["type"] == "S" and z["level"] < entry), default=None)
-            if res: tp = min(res, entry * (1 + TP_CAP))
-            if sup: sl = max(sup, entry * (1 - SL_CAP))
-    except Exception:
-        pass
-    if tp is None: tp = round(entry * (1 + TP_PCT), 2)
-    else: tp = round(tp, 2)
-    if sl is None: sl = round(entry * (1 - SL_PCT), 2)
-    else: sl = round(sl, 2)
-    risk = (entry - sl) * qty
-    reward = (tp - entry) * qty
-    return {
-        "side": "LONG",
-        "entry": round(entry, 2),
-        "qty": qty,
-        "mark_price": round(price, 2),
-        "unrealized_pnl": round((price - entry) * qty, 2),
-        "unrealized_pct": round((price / entry - 1) * 100, 2) if entry else 0.0,
-        "stop_loss": sl,
-        "take_profit": tp,
-        "risk": round(risk, 2),
-        "reward": round(reward, 2),
-        "rr": round(reward / risk, 2) if risk else 0.0,
-        "opened_at": fb["t"] if fb else None,
-    }
 
 def _interval_minutes():
     s = KL_INTERVAL
@@ -312,6 +280,85 @@ def sr_zones(highs, lows, closes, vols, swing=5, merge_pct=0.4, top_n=6):
     ]
 
 
+def atr(highs, lows, closes, n=14):
+    """Average True Range — measures volatility. Used for ATR-based stops."""
+    m = min(len(closes), len(highs), len(lows))
+    if m < n + 1:
+        # fallback: simple range of recent closes
+        if m < 2:
+            return 0.0
+        return (max(closes[-n:]) - min(closes[-n:])) / max(closes[-1], 1e-9)
+    trs = []
+    for i in range(1, m):
+        h, l, pc = highs[i], lows[i], closes[i - 1]
+        tr = max(h - l, abs(h - pc), abs(l - pc))
+        trs.append(tr)
+    if len(trs) < n:
+        return sum(trs) / len(trs) if trs else 0.0
+    # Wilder smoothing
+    a = sum(trs[:n]) / n
+    for v in trs[n:]:
+        a = (a * (n - 1) + v) / n
+    return a
+
+
+def regime(closes, highs=None, lows=None, n=20):
+    """Classify market regime to gate strategy selection.
+    Returns (label, score) where label in {trending, ranging, choppy}.
+    - trending: strong directional move (ADX-like) + Bollinger bandwidth high
+    - ranging:   low bandwidth, price oscillating
+    - choppy:    very low directional strength and low bandwidth
+    """
+    m = len(closes)
+    if m < n * 2:
+        return ("ranging", 0.0)
+    # directional strength: compare net displacement to realized volatility
+    window = closes[-n * 2:]
+    disp = abs(window[-1] - window[0]) / max(window[0], 1e-9)
+    avg_step = 0.0
+    for i in range(1, len(window)):
+        avg_step += abs(window[i] - window[i - 1]) / max(window[i - 1], 1e-9)
+    avg_step /= (len(window) - 1)
+    dir_strength = disp / max(avg_step * n, 1e-9)  # >1 means net move dominates noise
+    # Bollinger bandwidth (recent n)
+    rc = closes[-n:]
+    mean = sum(rc) / n
+    var = sum((x - mean) ** 2 for x in rc) / n
+    sd = var ** 0.5
+    bandwidth = (2 * sd) / max(mean, 1e-9)
+    if dir_strength > 1.6 and bandwidth > 0.025:
+        return ("trending", round(dir_strength, 2))
+    if bandwidth < 0.015:
+        return ("choppy", round(dir_strength, 2))
+    return ("ranging", round(dir_strength, 2))
+
+
+# Trailing stop state (only meaningful while a position is open). Updated in tick().
+_trail_stop = None  # price level; None when flat
+
+
+def trailing_stop_update(entry, entry_atr, px):
+    """Maintain a trailing stop once in profit. Locks in gains:
+    - arm only when price is >= entry + 1.0*ATR (i.e. in profit beyond noise)
+    - then keep stop at max(prev_stop, px - 1.0*ATR) but never below entry.
+    Returns the current stop price (or None if not yet armed)."""
+    global _trail_stop
+    if entry_atr <= 0:
+        return _trail_stop
+    if _trail_stop is None:
+        if px >= entry + entry_atr:  # in profit beyond one ATR of noise
+            _trail_stop = max(entry, px - entry_atr)
+    else:
+        # raise the stop as price climbs, never below entry
+        _trail_stop = max(_trail_stop, px - entry_atr, entry)
+    return _trail_stop
+
+
+def trailing_stop_reset():
+    global _trail_stop
+    _trail_stop = None
+
+
 def compute_indicators(interval=KL_INTERVAL, limit=300):
     """Compute the indicator series the dashboard overlays on the chart, using
     the SAME math the bot's strategy uses (rsi/ema/macd/breakout). Returns a
@@ -395,8 +442,12 @@ def compute_indicators(interval=KL_INTERVAL, limit=300):
                 _open = float(f["qty"]); break
             else:
                 _open = 0.0; break
+        # regime + ATR for the live signal context
+        _reg, _rs = regime(closes, highs, lows)
+        _a = atr(highs, lows, closes, 14)
         s, r = gen_signal(closes, vols, n - 1, (1 if _open > DUST else 0),
-                          closes[-1], 0, STRATEGY_PARAMS, STRATEGY, sr)
+                          closes[-1], 0, STRATEGY_PARAMS, STRATEGY, sr,
+                          atr_val=_a, regime_label=_reg)
         sig, reason = s, r
     except Exception as e:
         sig, reason = "HOLD", f"err {e}"
@@ -417,6 +468,9 @@ def compute_indicators(interval=KL_INTERVAL, limit=300):
         "signal_reason": reason,
         "strategy": STRATEGY,
         "strategy_params": STRATEGY_PARAMS,
+        "regime": _reg,
+        "regime_score": _rs,
+        "atr": round(_a, 2),
     }
 
 # In-memory cache so the (klines + signal) computation only runs occasionally;
@@ -505,19 +559,37 @@ def set_strategy(key):
 
 def get_strategy_key():
     return STRATEGY
-def gen_signal(closes, vols, i, position, entry, held, p, strategy, sr_zones=None):
+def gen_signal(closes, vols, i, position, entry, held, p, strategy, sr_zones=None, atr_val=None, regime_label=None):
     """Unified entry/exit signal for a given strategy.
-    Returns ("BUY"|"SELL"|"HOLD", reason). Shared SL/TP/time-stop on exits.
-    `sr_zones` (optional) feeds structure-based strategies (sr_bounce)."""
+    Returns ("BUY"|"SELL"|"HOLD", reason).
+    Phase-3 upgrades: regime gating, volume confirmation, ATR-based stops,
+    and a trailing stop (via module-level _trail_stop, armed in tick()).
+    `sr_zones` feeds structure-based strategies (sr_bounce).
+    `atr_val` is the current ATR (set in tick) used for volatility stops.
+    `regime_label` ("trending"/"ranging"/"choppy") gates mean-reversion vs trend."""
     px = closes[i]
+    # --- ENTRY gating by regime ---
+    # Mean-reversion strategies (reversion, sr_bounce) need a NON-trending market.
+    # Trend strategies (breakout, ema_trend) need a trending market.
     if position == 0:
+        mean_rev = strategy in ("reversion", "sr_bounce")
+        trend = strategy in ("breakout", "ema_trend")
+        if mean_rev and regime_label == "trending":
+            return ("HOLD", "regime trending — reversion paused")
+        if trend and regime_label == "choppy":
+            return ("HOLD", "regime choppy — trend paused")
+        # volume confirmation helper
+        vol_ok = True
+        if vols is not None and i < len(vols):
+            lb = p.get("lookback", 20) if strategy == "breakout" else 20
+            vol_ok = vols[i] > vol_avg(vols, lb) * p.get("vol_mult", 1.3)
         if strategy == "reversion":
             r = rsi(closes[:i+1]); rp = rsi(closes[:i])
-            if r < p["entry_ceil"] and rp <= r:
+            if r < p["entry_ceil"] and rp <= r and vol_ok:
                 return ("BUY", f"RSI {r:.0f} turn-up")
             lo = max(1, i-49)
             recent = [rsi(closes[max(0, j-13):j+1]) for j in range(lo, i+1)]
-            if len(recent) >= 10 and rp <= r and r <= min(recent) + 3.0:
+            if len(recent) >= 10 and rp <= r and r <= min(recent) + 3.0 and vol_ok:
                 return ("BUY", f"RSI near-low {r:.0f}")
             return ("HOLD", f"RSI {rsi(closes[:i+1]):.0f}")
         elif strategy == "ema_trend":
@@ -531,10 +603,9 @@ def gen_signal(closes, vols, i, position, entry, held, p, strategy, sr_zones=Non
         elif strategy == "sr_bounce":
             if not sr_zones:
                 return ("HOLD", "no S/R yet")
-            # nearest support at/below current price
             sup = max((z["level"] for z in sr_zones if z["type"] == "S" and z["level"] <= px * 1.002), default=None)
             r = rsi(closes[:i+1]); rp = rsi(closes[:i])
-            if sup and abs(px - sup) / sup <= p.get("zone_pct", 0.4)/100.0 and r < p["entry_ceil"] and rp <= r:
+            if sup and abs(px - sup) / sup <= p.get("zone_pct", 0.4)/100.0 and r < p["entry_ceil"] and rp <= r and vol_ok:
                 return ("BUY", f"S/R bounce {sup:.0f} RSI {r:.0f}")
             return ("HOLD", f"RSI {r:.0f} no support")
         else:  # breakout / momentum
@@ -543,23 +614,30 @@ def gen_signal(closes, vols, i, position, entry, held, p, strategy, sr_zones=Non
                 return ("HOLD", "warmup")
             hi = max(closes[i-lb:i]); mh, ms, mhst = macd(closes[:i+1])
             mhst_prev = macd(closes[:i])[2]
-            vol_ok = (vols[i] > vol_avg(vols, lb) * p.get("vol_mult", 1.5)) if i < len(vols) else True
             if px > hi and mhst > 0 and mhst >= mhst_prev and vol_ok:
                 return ("BUY", f"breakout>{hi:.0f} vol")
             return ("HOLD", "no breakout")
     else:  # holding -> exit logic
-        if px <= entry * (1 - SL_PCT):
+        # Trailing stop (armed in tick) takes priority once in profit.
+        if _trail_stop is not None and px <= _trail_stop:
+            return ("SELL", f"TRAIL {_trail_stop:.0f} (locked gain)")
+        # ATR-based hard stops (fall back to % if ATR unknown)
+        if atr_val and atr_val > 0:
+            sl = entry - 1.5 * atr_val
+            tp = entry + 2.0 * atr_val
+        else:
+            sl = entry * (1 - SL_PCT)
+            tp = entry * (1 + TP_PCT)
+        if px <= sl:
             return ("SELL", f"STOP -{(1-px/entry)*100:.1f}%")
-        if px >= entry * (1 + TP_PCT):
+        if px >= tp:
             return ("SELL", f"TP +{(px/entry-1)*100:.1f}%")
         if held >= MAX_HOLD:
             return ("SELL", f"TIME-STOP {held}c")
-        if strategy == "reversion":
+        if strategy in ("reversion", "sr_bounce"):
             if rsi(closes[:i+1]) >= p["exit_rsi"]:
                 return ("SELL", f"RSI>={p['exit_rsi']}")
         elif strategy == "sr_bounce":
-            if rsi(closes[:i+1]) >= p["exit_rsi"]:
-                return ("SELL", f"RSI>={p['exit_rsi']}")
             res = min((z["level"] for z in sr_zones if z["type"] == "R" and z["level"] >= entry), default=None)
             if res and px >= res * 0.999:
                 return ("SELL", f"hit resistance {res:.0f}")
@@ -569,7 +647,7 @@ def gen_signal(closes, vols, i, position, entry, held, p, strategy, sr_zones=Non
                 return ("HOLD", "warmup")
             ema_f = ema_series(closes[:i+1], f_); ema_s = ema_series(closes[:i+1], s_)
             if ema_f[-1] < ema_s[-1] and ema_f[-2] >= ema_s[-2]:
-                return ("SELL", f"EMA death cross")
+                return ("SELL", "EMA death cross")
             if px < ema_s[-1]:
                 return ("SELL", f"below EMA50 {ema_s[-1]:.0f}")
         else:  # breakout
@@ -580,9 +658,18 @@ def gen_signal(closes, vols, i, position, entry, held, p, strategy, sr_zones=Non
                 return ("SELL", "MACD neg")
         return ("HOLD", f"hold {(px/entry-1)*100:+.1f}%")
 
-def record_fill(side, qty, price, oid):
-    with open(FILL_LOG, "a") as f:
-        f.write(json.dumps({"t": dt.datetime.now().isoformat(), "side": side, "qty": qty, "price": price, "order": oid}) + "\n")
+def record_fill(side, qty, price, oid, actor="bot", symbol=None):
+    # actor: "bot" (automated) or "user" (manual trade placed by the user).
+    sym = symbol or SYMBOL
+    with open(get_fill_log(), "a") as f:
+        f.write(json.dumps({"t": dt.datetime.now().isoformat(), "symbol": sym, "side": side, "qty": qty,
+                            "price": price, "order": oid, "actor": actor}) + "\n")
+
+def record_manual(side, qty, price, symbol=None):
+    """Persist a manual (user-placed) order to the shared ledger, tagged actor=user."""
+    oid = f"manual-{int(time.time()*1000)}"
+    record_fill(side, qty, price, oid, actor="user", symbol=symbol)
+    return oid
 
 # last realized exit (reason + price + ts) — surfaced on the dashboard so the
 # user can see WHY the bot closed the previous trade (RSI / TP / SL / time-stop).
@@ -593,8 +680,9 @@ def _record_exit(reason, price):
 
 def load_fills():
     out=[]
-    if os.path.exists(FILL_LOG):
-        for ln in open(FILL_LOG):
+    fl = get_fill_log()
+    if os.path.exists(fl):
+        for ln in open(fl):
             try: out.append(json.loads(ln))
             except Exception: continue
     return out
@@ -607,82 +695,113 @@ def load_tune():
         pass
     return None
 
+
 def tick():
     c = creds()
-    if not c.get("apiKey"):
-        log("NO CREDENTIALS"); return
+    has_keys = bool(c.get("apiKey"))
     try:
-        price = demo_price()
-        if price == 0:
-            log("PRICE 0 - all price sources unreachable"); return
-        kl = demo_get("/klines", {"symbol":SYMBOL,"interval":KL_INTERVAL,"limit":KL_LIMIT})
-        if not isinstance(kl, list) or len(kl) < 15:
-            log("KLINES too short"); return
-        closes = [float(k[4]) for k in kl]
-        vols = [float(k[5]) for k in kl]
-        highs = [float(k[2]) for k in kl]
-        lows = [float(k[3]) for k in kl]
-        sr = sr_zones(highs, lows, closes, vols)
-        val = rsi(closes)
-        acc = signed("/account", {})
-        if not isinstance(acc, dict) or "balances" not in acc:
-            log(f"ACCOUNT ERR {acc}"); return
-        bal = {b["asset"]: float(b["free"]) for b in acc["balances"]}
-        btc = bal.get("BTC",0.0); usdt = bal.get("USDT",0.0)
-        p = STRATEGY_PARAMS
-
-        if btc*price < DUST*price or btc < DUST:
-            # FLAT (or only dust) — ask the active strategy for an entry; gate on recent edge
-            sig, reason = gen_signal(closes, vols, len(closes)-1, 0, 0.0, 0, p, STRATEGY, sr)
-            recent = closes[-120:] if len(closes) >= 120 else closes
-            eg = backtest_closes(recent, STRATEGY, p)
-            edge_ok = bool(eg and eg["ret"] > 0 and eg["trades"] >= 1)
-            if sig == "BUY" and edge_ok and usdt >= SIZE_MIN:
-                # Respect the user's capital limit as the hard ceiling, but never
-                # more than 95% of available USDT. SIZE_MIN is Binance's floor —
-                # below it a MARKET order is rejected, so we gate on it above.
-                notional = min(MAX_CAPITAL, usdt*0.95)
-                if notional < SIZE_MIN:
-                    notional = 0.0  # would be rejected by Binance; stay flat
-                if notional >= SIZE_MIN:
-                    # MARKET BUY by quote: Binance computes qty from USDT spent.
-                    # Avoids manual qty rounding that triggered Binance -1013.
-                    o = signed("/order", {"symbol":SYMBOL,"side":"BUY","type":"MARKET",
-                                          "quoteOrderQty": round(notional, 2)}, "POST")
-                    if isinstance(o, dict) and o.get("orderId"):
-                        # derive executed qty/price from the fill for the ledger
-                        ex = (o.get("fills") or [{}])[0]
-                        qty = float(ex.get("qty", 0)); fill_px = float(ex.get("price", price))
-                        bqty = fmt_qty(qty) if qty > 0 else fmt_qty(notional/price)
-                        log(f"BUY[{STRATEGY}] qty={bqty} @ {fill_px:.2f} ({reason}) edge={eg['ret']:.1f}% -> {o['orderId']}")
-                        record_fill("BUY", bqty, fill_px, o["orderId"])
-                    else: log(f"BUY FAILED {o}")
-                else:
-                    log(f"HOLD — limit ${MAX_CAPITAL:.2f} below Binance min ${SIZE_MIN:.2f}; raise limit to trade")
+        _fills = load_fills()
+        balances = {}
+        for f in _fills:
+            sym = f.get("symbol", SYMBOL)
+            q = float(f["qty"])
+            if f["side"] == "BUY": balances[sym] = balances.get(sym, 0.0) + q
+            else: balances[sym] = balances.get(sym, 0.0) - q
+        
+        open_symbols = [s for s, q in balances.items() if q > DUST]
+        active_symbols = list(set(open_symbols + [SYMBOL]))
+        prices = get_all_prices()
+        
+        for sym in active_symbols:
+            price = prices.get(sym)
+            if not price:
+                url = f"https://api.binance.com/api/v3/ticker/price?symbol={sym}"
+                try:
+                    with urllib.request.urlopen(urllib.request.Request(url), timeout=5) as r:
+                        price = float(json.loads(r.read().decode()).get("price", 0))
+                except: continue
+            if price == 0: continue
+            
+            kl = demo_get("/klines", {"symbol": sym, "interval": KL_INTERVAL, "limit": KL_LIMIT})
+            if not isinstance(kl, list) or len(kl) < 15: continue
+            closes = [float(k[4]) for k in kl]
+            vols = [float(k[5]) for k in kl]
+            highs = [float(k[2]) for k in kl]
+            lows = [float(k[3]) for k in kl]
+            sr = sr_zones(highs, lows, closes, vols)
+            cur_atr = atr(highs, lows, closes, 14)
+            reg_label, reg_score = regime(closes, highs, lows)
+            
+            qty_held = balances.get(sym, 0.0)
+            
+            # Global cash wallet balance calculation (starting 10,000 USDT deposit)
+            cash = 10000.0
+            for f in _fills:
+                if f["side"] == "BUY": cash -= float(f["qty"]) * float(f["price"])
+                else: cash += float(f["qty"]) * float(f["price"])
+            
+            p = STRATEGY_PARAMS
+            if qty_held < DUST:
+                if sym != SYMBOL: continue # Only hunt for entries on chart symbol
+                sig, reason = gen_signal(closes, vols, len(closes)-1, 0, 0.0, 0, p, STRATEGY, sr, atr_val=cur_atr, regime_label=reg_label)
+                trailing_stop_reset()
+                
+                if sig == "BUY" and cash >= SIZE_MIN:
+                    notional = min(float(MAX_CAPITAL), max(10.0, cash * 0.95))
+                    if notional >= SIZE_MIN:
+                        qty = round(notional / price, 6)
+                        if has_keys:
+                            o = signed("/order", {"symbol":sym,"side":"BUY","type":"MARKET", "quoteOrderQty": round(notional, 2)}, "POST")
+                            if isinstance(o, dict) and o.get("orderId"):
+                                ex = (o.get("fills") or [{}])[0]
+                                fill_px = float(ex.get("price", price))
+                                record_fill("BUY", fmt_qty(float(ex.get("qty", qty))), fill_px, o["orderId"], actor="bot", symbol=sym)
+                                log(f"BOT BUY {sym} @ {fill_px} ({reason})")
+                        else:
+                            # Paper trading fill
+                            oid = f"paper-bot-{int(time.time()*1000)}"
+                            record_fill("BUY", qty, price, oid, actor="bot", symbol=sym)
+                            log(f"BOT PAPER BUY {sym} {qty} @ {price:.2f} ({reason})")
             else:
-                log(f"HOLD (flat) [{STRATEGY}] sig={sig} edge_ok={edge_ok} ({reason})")
-        else:
-            # HOLDING — exit via gen_signal (SL/TP/time-stop + strategy exit)
-            if btc < DUST:
-                # only dust left (e.g. SELL rounding) — nothing to exit, skip to avoid 400
-                log(f"HOLD (dust {btc:.6f} BTC) — no exit")
-            else:
-                fb = last_buy(load_fills())
+                f_sym = [f for f in _fills if f.get("symbol", SYMBOL) == sym]
+                fb = [f for f in f_sym if f["side"] == "BUY"]
+                fb = fb[-1] if fb else None
                 entry = float(fb["price"]) if fb else price
                 held = int((dt.datetime.now() - dt.datetime.fromisoformat(fb["t"])).total_seconds()/60/_interval_minutes()) if fb else 0
-                sig, reason = gen_signal(closes, vols, len(closes)-1, 1, entry, held, p, STRATEGY, sr)
-                if sig == "SELL":
-                    sq = fmt_qty(btc)
-                    o = signed("/order", {"symbol":SYMBOL,"side":"SELL","type":"MARKET","quantity":sq}, "POST")
-                    if isinstance(o, dict) and o.get("orderId"):
-                        log(f"SELL[{STRATEGY}] qty={sq} @ {price:.2f} ({reason}) -> {o['orderId']}")
-                        record_fill("SELL", sq, price, o["orderId"])
-                        _record_exit(reason, price)
-                    else: log(f"SELL FAILED {o}")
+                
+                sig, reason = "HOLD", ""
+                m_state = MANUAL_STATE.get(sym, {})
+                sl = m_state.get("sl")
+                tp = m_state.get("tp")
+                auto = m_state.get("auto_manage", True)
+                
+                if sl and price <= float(sl):
+                    sig, reason = "SELL", f"Stop Loss Hit @ ${price:.2f} (Target SL: ${float(sl):.2f})"
+                elif tp and price >= float(tp):
+                    sig, reason = "SELL", f"Take Profit Hit @ ${price:.2f} (Target TP: ${float(tp):.2f})"
+                elif auto:
+                    trailing_stop_update(entry, cur_atr, price)
+                    sig, reason = gen_signal(closes, vols, len(closes)-1, 1, entry, held, p, STRATEGY, sr, atr_val=cur_atr, regime_label=reg_label)
                 else:
-                    log(f"HOLD (in pos) [{STRATEGY}] RSI={val:.1f} PnL={(price/entry-1)*100:+.1f}% held={held}c ({reason})")
+                    sig, reason = "HOLD", "Auto-Manage OFF"
+                
+                if sig == "SELL":
+                    sq = round(qty_held, 6)
+                    if has_keys:
+                        o = signed("/order", {"symbol":sym,"side":"SELL","type":"MARKET","quantity":fmt_qty(sq)}, "POST")
+                        if isinstance(o, dict) and o.get("orderId"):
+                            record_fill("SELL", fmt_qty(sq), price, o["orderId"], actor="bot", symbol=sym)
+                            _record_exit(reason, price)
+                            log(f"BOT SELL {sym} @ {price} ({reason})")
+                    else:
+                        # Paper trading fill
+                        oid = f"paper-bot-{int(time.time()*1000)}"
+                        record_fill("SELL", sq, price, oid, actor="bot", symbol=sym)
+                        _record_exit(reason, price)
+                        log(f"BOT PAPER SELL {sym} {sq} @ {price:.2f} ({reason})")
     except Exception as e:
-        log(f"TICK ERROR {e}")
+        log(f"TICK ERR {e}")
+
 
 def trader_loop():
     global _cycle_count
@@ -695,70 +814,64 @@ def trader_loop():
             except Exception as e: log(f"TUNE ERROR {e}")
         time.sleep(LOOP_SECONDS)
 
+SCANNER_RESULTS = []
+def scanner_loop():
+    global SCANNER_RESULTS
+    log("scanner loop started")
+    while True:
+        try:
+            # 1. Fetch top volume USDT pairs
+            url = "https://api.binance.com/api/v3/ticker/24hr"
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=10) as res:
+                tickers = json.loads(res.read().decode())
+            
+            usdt_pairs = [t for t in tickers if t["symbol"].endswith("USDT") and float(t["quoteVolume"]) > 1000000]
+            usdt_pairs.sort(key=lambda x: float(x["quoteVolume"]), reverse=True)
+            top_pairs = usdt_pairs[:20] # scan top 20 for speed
+            
+            results = []
+            for pair in top_pairs:
+                sym = pair["symbol"]
+                # get 15m klines
+                kl = demo_get("/klines", {"symbol": sym, "interval": "15m", "limit": 100})
+                if not isinstance(kl, list) or len(kl) < 20: continue
+                
+                closes = [float(k[4]) for k in kl]
+                highs = [float(k[2]) for k in kl]
+                lows = [float(k[3]) for k in kl]
+                vols = [float(k[5]) for k in kl]
+                
+                r = rsi(closes)
+                chg24 = float(pair["priceChangePercent"])
+                vol_avg_val = vol_avg(vols, 20)
+                vol_spike = vols[-1] / vol_avg_val if vol_avg_val > 0 else 1
+                
+                # Simple logic: classify as bullish, bearish, or neutral
+                if r < 30: state = "Oversold Buy"
+                elif r > 70: state = "Overbought Sell"
+                elif chg24 > 5 and vol_spike > 1.5: state = "Momentum Breakout"
+                else: state = "Neutral"
+                
+                results.append({
+                    "symbol": sym,
+                    "rsi": round(r, 1),
+                    "priceChange": chg24,
+                    "state": state,
+                    "price": float(pair["lastPrice"])
+                })
+            
+            # Sort: interesting ones first (oversold, overbought, breakout)
+            results.sort(key=lambda x: (x["state"] == "Neutral", x["rsi"]))
+            SCANNER_RESULTS = results
+        except Exception as e:
+            log(f"SCANNER ERROR {e}")
+        time.sleep(300) # scan every 5 minutes
+
 def _day_key(iso):
     return iso[:10]  # YYYY-MM-DD
 
-def portfolio_analytics(fills, price):
-    """Compute total / day / yesterday / week P&L from the fills ledger."""
-    # cash-flow reconstruction: track BTC position and realized P&L per fill
-    btc_pos = 0.0
-    realized_total = 0.0
-    # per-day gross gain and loss (realized) and open-mark deltas
-    day_gain = {}   # date -> positive realized
-    day_loss = {}   # date -> negative realized (abs)
-    day_pnl  = {}   # date -> net realized
-    for f in fills:
-        d = _day_key(f["t"])
-        p = float(f["price"]) * float(f["qty"])
-        if f["side"] == "BUY":
-            btc_pos += float(f["qty"])
-            realized_total -= p
-            day_pnl[d] = day_pnl.get(d, 0.0) - p
-        else:
-            btc_pos -= float(f["qty"])
-            realized_total += p
-            day_pnl[d] = day_pnl.get(d, 0.0) + p
-    for d, v in day_pnl.items():
-        if v >= 0: day_gain[d] = day_gain.get(d, 0.0) + v
-        else:      day_loss[d] = day_loss.get(d, 0.0) + abs(v)
 
-    today = dt.datetime.now().strftime("%Y-%m-%d")
-    y = dt.datetime.now() - dt.timedelta(days=1)
-    yesterday = y.strftime("%Y-%m-%d")
-    week_ago = (dt.datetime.now() - dt.timedelta(days=7)).strftime("%Y-%m-%d")
-
-    def sum_range(start, end):
-        g = sum(v for d, v in day_gain.items() if start <= d <= end)
-        l = sum(v for d, v in day_loss.items() if start <= d <= end)
-        return g, l, g - l
-
-    # week = last 7 days inclusive of today
-    wk_gain, wk_loss, wk_net = sum_range(week_ago, today)
-    today_gain = day_gain.get(today, 0.0)
-    today_loss = day_loss.get(today, 0.0)
-    today_net = day_pnl.get(today, 0.0)
-    y_gain = day_gain.get(yesterday, 0.0)
-    y_loss = day_loss.get(yesterday, 0.0)
-    y_net = day_pnl.get(yesterday, 0.0)
-
-    return {
-        "realized_total": round(realized_total, 2),
-        "today_gain": round(today_gain, 2),
-        "today_loss": round(today_loss, 2),
-        "today_net": round(today_net, 2),
-        "yesterday_gain": round(y_gain, 2),
-        "yesterday_loss": round(y_loss, 2),
-        "yesterday_net": round(y_net, 2),
-        "week_gain": round(wk_gain, 2),
-        "week_loss": round(wk_loss, 2),
-        "week_net": round(wk_net, 2),
-    }
-
-# ---------------------------------------------------------------------------
-# Performance analytics: reconstruct round-trips from the fills ledger and
-# compute win-rate / profit-factor / drawdown / per-strategy P&L. Pure function
-# of the fills log — no live calls, safe to hit every few seconds.
-# ---------------------------------------------------------------------------
 def round_trips(fills):
     """Pair BUY->SELL fills into round-trips. Returns list of
     {entry_t, exit_t, entry_px, exit_px, qty, pnl, pnl_pct}."""
@@ -920,47 +1033,339 @@ def self_tune():
     log(f"SELF-TUNE best={best['strategy']} test_ret={best['test_ret']}% applied={applied}")
     return report
 
+def _state_atr():
+    """Current ATR for the dashboard (small klines call; cached cheaply by callers)."""
+    try:
+        kl = demo_get("/klines", {"symbol": SYMBOL, "interval": KL_INTERVAL, "limit": 60})
+        if isinstance(kl, list) and len(kl) >= 16:
+            h = [float(k[2]) for k in kl]; l = [float(k[3]) for k in kl]; c = [float(k[4]) for k in kl]
+            return round(atr(h, l, c, 14), 2)
+    except Exception:
+        pass
+    return 0.0
+
+
+def _state_regime():
+    """Current market regime (label, score) for the dashboard."""
+    try:
+        kl = demo_get("/klines", {"symbol": SYMBOL, "interval": KL_INTERVAL, "limit": 120})
+        if isinstance(kl, list) and len(kl) >= 40:
+            c = [float(k[4]) for k in kl]; h = [float(k[2]) for k in kl]; l = [float(k[3]) for k in kl]
+            return regime(c, h, l)
+    except Exception:
+        pass
+    return ("ranging", 0.0)
+
+
+
+def get_all_prices():
+    try:
+        url = "https://api.binance.com/api/v3/ticker/price"
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=10) as res:
+            data = json.loads(res.read().decode())
+            return {item["symbol"]: float(item["price"]) for item in data}
+    except Exception: return {}
+
+def pnl_by_actor(fills, prices=None):
+    if prices is None: prices = get_all_prices()
+    res = {"bot": {"realized":0.0, "open_value":0.0, "net":0.0, "btc_open":0.0},
+           "user": {"realized":0.0, "open_value":0.0, "net":0.0, "btc_open":0.0}}
+    for act in ["bot", "user"]:
+        f_act = [f for f in fills if f.get("actor", "bot") == act]
+        cash = 0.0
+        bal = {}
+        for f in f_act:
+            sym = f.get("symbol", SYMBOL)
+            q = float(f["qty"]); p = float(f["price"])
+            if f["side"] == "BUY":
+                cash -= q * p
+                bal[sym] = bal.get(sym, 0.0) + q
+            else:
+                cash += q * p
+                bal[sym] = bal.get(sym, 0.0) - q
+        
+        open_val = 0.0
+        btc_open = 0.0
+        for sym, qty in bal.items():
+            if qty > DUST:
+                p = prices.get(sym, 0.0)
+                open_val += qty * p
+                if sym == SYMBOL: btc_open += qty
+        
+        res[act]["realized"] = cash
+        res[act]["open_value"] = open_val
+        res[act]["net"] = cash + open_val
+        res[act]["btc_open"] = btc_open
+    return res
+
+def portfolio_analytics(fills):
+    day_pnl = {}
+    day_gain = {}
+    day_loss = {}
+    for f in fills:
+        d = _day_key(f["t"])
+        p = float(f["price"]) * float(f["qty"])
+        if f["side"] == "BUY":
+            day_pnl[d] = day_pnl.get(d, 0.0) - p
+        else:
+            day_pnl[d] = day_pnl.get(d, 0.0) + p
+    for d, v in day_pnl.items():
+        if v >= 0: day_gain[d] = day_gain.get(d, 0.0) + v
+        else:      day_loss[d] = day_loss.get(d, 0.0) + abs(v)
+
+    today = dt.datetime.now().strftime("%Y-%m-%d")
+    yesterday = (dt.datetime.now() - dt.timedelta(days=1)).strftime("%Y-%m-%d")
+    week_ago = (dt.datetime.now() - dt.timedelta(days=7)).strftime("%Y-%m-%d")
+
+    def sum_range(start, end):
+        g = sum(v for d, v in day_gain.items() if start <= d <= end)
+        l = sum(v for d, v in day_loss.items() if start <= d <= end)
+        return g, l, g - l
+
+    wk_gain, wk_loss, wk_net = sum_range(week_ago, today)
+    return {
+        "realized_total": sum(day_pnl.values()),
+        "today_gain": day_gain.get(today, 0.0),
+        "today_loss": day_loss.get(today, 0.0),
+        "today_net": day_pnl.get(today, 0.0),
+        "yesterday_gain": day_gain.get(yesterday, 0.0),
+        "yesterday_loss": day_loss.get(yesterday, 0.0),
+        "yesterday_net": day_pnl.get(yesterday, 0.0),
+        "week_gain": wk_gain, "week_loss": wk_loss, "week_net": wk_net
+    }
+
 def make_state():
     fills = load_fills()
-    spent=gained=0.0; btc_bal=0.0
+    prices = get_all_prices()
+    current_price = prices.get(SYMBOL) or demo_price()
+    
+    cash = float(MAX_CAPITAL)
+    balances = {}
+    equity = []
+    
     for f in fills:
-        if f["side"]=="BUY": spent+=f["qty"]*f["price"]; btc_bal+=f["qty"]
-        else: gained+=f["qty"]*f["price"]; btc_bal-=f["qty"]
-    price = demo_price()
-    acc = signed("/account", {})
-    usdt=0.0; live_btc=0.0
-    if isinstance(acc, dict):
-        for b in acc.get("balances", []):
-            if b["asset"]=="USDT": usdt=float(b["free"])
-            if b["asset"]=="BTC": live_btc=float(b["free"])
-    open_btc = live_btc if abs(live_btc - btc_bal) > DUST else btc_bal
-    if open_btc < DUST:
-        open_btc = 0.0
-    unreal = open_btc*price; realized = gained-spent
-    total_funds = usdt + unreal
-    equity=[]; rb=0.0; ru=0.0
-    for f in fills:
-        if f["side"]=="BUY": rb+=f["qty"]; ru-=f["qty"]*f["price"]
-        else: rb-=f["qty"]; ru+=f["qty"]*f["price"]
-        equity.append({"t":f["t"],"equity":round(ru+rb*price,2)})
-    equity.append({"t":dt.datetime.now().isoformat(),"equity":round(total_funds,2)})
-    pa = portfolio_analytics(fills, price)
+        sym = f.get("symbol", SYMBOL)
+        qty = float(f["qty"])
+        price = float(f["price"])
+        if f["side"] == "BUY":
+            cash -= qty * price
+            balances[sym] = balances.get(sym, 0.0) + qty
+        else:
+            cash += qty * price
+            balances[sym] = balances.get(sym, 0.0) - qty
+        
+        # Approximate equity at fill
+        eq_at_fill = cash + sum(balances.get(s, 0.0) * price for s in balances if balances[s] > DUST)
+        equity.append({"t": f["t"], "equity": round(eq_at_fill, 2)})
+
+    open_symbols = [sym for sym, qty in balances.items() if qty > DUST]
+    
+    positions_data = []
+    total_unrealized = 0.0
+    for sym in open_symbols:
+        qty = balances[sym]
+        p = prices.get(sym, 0.0)
+        if p == 0: continue
+        entry = p
+        for f in reversed(fills):
+            if f.get("symbol", SYMBOL) == sym and f["side"] == "BUY":
+                entry = float(f["price"])
+                break
+        unrealized = (p - entry) * qty
+        total_unrealized += unrealized
+        positions_data.append({
+            "symbol": sym, "side": "LONG", "qty": round(qty, 6), "entry": entry,
+            "mark_price": p, "unrealized_pnl": round(unrealized, 2),
+            "unrealized_pct": round((p / entry - 1) * 100, 2) if entry > 0 else 0
+        })
+        
+    total_funds = cash + sum(balances[s] * prices.get(s, 0.0) for s in open_symbols)
+    realized = cash - float(MAX_CAPITAL)
+    
+    equity.append({"t": dt.datetime.now().isoformat(), "equity": round(total_funds, 2)})
+    
     return {
-        "symbol":SYMBOL,"price":price,"usdt":round(usdt,2),
-        "btc_open":round(open_btc,6),"open_value":round(unreal,2),
-        "realized":round(realized,2),"net_pnl":round(realized+unreal,2),
-        "total_funds":round(total_funds,2),
-        "fills":len(fills),"round_trips":len([f for f in fills if f["side"]=="SELL"]),
-        "equity_curve":equity,"portfolio":pa,
+        "symbol": SYMBOL,
+        "price": current_price,
+        "usdt": round(cash, 2),
+        "total_funds": round(total_funds, 2),
+        "realized": round(realized, 2),
+        "net_pnl": round(total_funds - float(MAX_CAPITAL), 2),
+        "fills": len(fills),
+        "round_trips": len([f for f in fills if f["side"]=="SELL"]),
+        "equity_curve": equity,
+        "portfolio": portfolio_analytics(fills),
+        "positions": positions_data,
         "strategy": STRATEGY,
         "strategy_params": STRATEGY_PARAMS,
         "strategies": {k: {"name": v["name"], "desc": v["desc"], "params": v["params"]} for k, v in STRATEGY_LIB.items()},
-        "last_exit": _last_exit,
-        "position": _open_position(price, open_btc, fills),
-        "tune": load_tune(),
         "creds_loaded": bool(creds().get("apiKey")),
         "max_capital": MAX_CAPITAL,
-        "updated":dt.datetime.now().isoformat(),
+        "regime": _state_regime()[0],
+        "regime_score": _state_regime()[1],
+        "atr": _state_atr(),
+        "trailing_stop": _trail_stop,
+        "updated": dt.datetime.now().isoformat(),
+        "pnl_by_actor": pnl_by_actor(fills, prices),
+        "manual_state": MANUAL_STATE.get(SYMBOL, {})
+    }
+
+
+def current_signal():
+    """Compute the LIVE signal the bot is looking at right now, with reason +
+    supporting context, so the dashboard can show 'current trade signal'."""
+    try:
+        price = demo_price()
+        if price == 0:
+            return {"signal": "HOLD", "reason": "price unavailable", "rsi": None,
+                    "regime": None, "strategy": STRATEGY}
+        kl = demo_get("/klines", {"symbol": SYMBOL, "interval": KL_INTERVAL, "limit": 300})
+        if not isinstance(kl, list) or len(kl) < 30:
+            return {"signal": "HOLD", "reason": "klines loading", "rsi": None,
+                    "regime": None, "strategy": STRATEGY}
+        closes = [float(k[4]) for k in kl]
+        vols = [float(k[5]) for k in kl]
+        highs = [float(k[2]) for k in kl]
+        lows = [float(k[3]) for k in kl]
+        sr = sr_zones(highs, lows, closes, vols)
+        i = len(closes) - 1
+        r = rsi(closes)
+        reg_label, reg_score = regime(closes, highs, lows)
+        _fills = load_fills()
+        btc = 0.0
+        for f in _fills:
+            btc += float(f["qty"]) if f["side"] == "BUY" else -float(f["qty"])
+        pos = 1 if btc > DUST else 0
+        fb = last_buy(_fills)
+        entry = float(fb["price"]) if fb else price
+        held = int((dt.datetime.now() - dt.datetime.fromisoformat(fb["t"])).total_seconds()/60/_interval_minutes()) if fb else 0
+        cur_atr = atr(highs, lows, closes, 14)
+        sig, reason = gen_signal(closes, vols, i, pos, entry, held, STRATEGY_PARAMS,
+                                STRATEGY, sr, atr_val=cur_atr, regime_label=reg_label)
+        return {
+            "signal": sig,
+            "reason": reason,
+            "rsi": round(r, 1),
+            "regime": reg_label,
+            "regime_score": round(reg_score, 2),
+            "strategy": STRATEGY,
+            "strategy_name": STRATEGY_LIB[STRATEGY]["name"],
+            "price": round(price, 2),
+            "position": "LONG" if pos else "FLAT",
+        }
+    except Exception as e:
+        return {"signal": "HOLD", "reason": f"error: {e}", "rsi": None,
+                "regime": None, "strategy": STRATEGY}
+
+def current_risk():
+    """Explain WHY the bot isn't trading right now and the risk of placing a
+    trade at the current price (SL/TP/ATR-based)."""
+    try:
+        price = demo_price()
+        if price == 0:
+            return {"trading_blocked": True, "reason": "price feed unavailable"}
+        kl = demo_get("/klines", {"symbol": SYMBOL, "interval": KL_INTERVAL, "limit": 300})
+        if not isinstance(kl, list) or len(kl) < 30:
+            return {"trading_blocked": True, "reason": "market data loading"}
+        closes = [float(k[4]) for k in kl]
+        highs = [float(k[2]) for k in kl]
+        lows = [float(k[3]) for k in kl]
+        vols = [float(k[5]) for k in kl]
+        sr = sr_zones(highs, lows, closes, vols)
+        r = rsi(closes)
+        reg_label, reg_score = regime(closes, highs, lows)
+        cur_atr = atr(highs, lows, closes, 14)
+        _fills = load_fills()
+        btc = 0.0; usdt = float(MAX_CAPITAL)
+        for f in _fills:
+            if f["side"] == "BUY":
+                btc += float(f["qty"]); usdt -= float(f["qty"]) * float(f["price"])
+            else:
+                btc -= float(f["qty"]); usdt += float(f["qty"]) * float(f["price"])
+        flat = btc <= DUST
+        blocks = []
+        if flat:
+            sig, reason = gen_signal(closes, vols, len(closes)-1, 0, 0.0, 0, STRATEGY_PARAMS,
+                                     STRATEGY, sr, atr_val=cur_atr, regime_label=reg_label)
+            if sig != "BUY":
+                blocks.append(f"Signal is {sig} ({reason}) — no long entry trigger yet.")
+            if reg_label == "trending" and STRATEGY in ("reversion", "sr_bounce"):
+                blocks.append("Mean-reversion paused: market is trending.")
+            if reg_label == "choppy" and STRATEGY in ("breakout", "ema_trend"):
+                blocks.append("Trend strategy paused: market is choppy/ranging.")
+            if usdt < SIZE_MIN:
+                blocks.append(f"USDT {usdt:.2f} below Binance min notional {SIZE_MIN:.2f}.")
+        else:
+            blocks.append("Already holding a position — bot only adds on BUY when FLAT.")
+        tp, sl = None, None
+        try:
+            res = min((z["level"] for z in sr if z["type"] == "R" and z["level"] > price), default=None)
+            sup = max((z["level"] for z in sr if z["type"] == "S" and z["level"] < price), default=None)
+            if res: tp = min(res, price * (1 + TP_CAP))
+            if sup: sl = max(sup, price * (1 - SL_CAP))
+        except Exception:
+            pass
+        if tp is None: tp = round(price * (1 + TP_PCT), 2)
+        else: tp = round(tp, 2)
+        if sl is None: sl = round(price * (1 - SL_PCT), 2)
+        else: sl = round(sl, 2)
+        risk_pct = round((price - sl) / price * 100, 2)
+        reward_pct = round((tp - price) / price * 100, 2)
+        return {
+            "trading_blocked": bool(blocks),
+            "block_reasons": blocks,
+            "signal": gen_signal(closes, vols, len(closes)-1, 0 if flat else 1,
+                                 (last_buy(_fills) or {}).get("price", price), 0,
+                                 STRATEGY_PARAMS, STRATEGY, sr,
+                                 atr_val=cur_atr, regime_label=reg_label)[0],
+            "regime": reg_label,
+            "regime_score": round(reg_score, 2),
+            "rsi": round(r, 1),
+            "atr": round(cur_atr, 2) if cur_atr else None,
+            "entry_risk": {
+                "sl_price": sl,
+                "tp_price": tp,
+                "risk_pct": risk_pct,
+                "reward_pct": reward_pct,
+                "rr": round((tp - price) / (price - sl), 2) if (price - sl) else 0.0,
+            },
+            "available_usdt": round(usdt, 2),
+            "flat": flat,
+        }
+    except Exception as e:
+        return {"trading_blocked": True, "reason": f"error: {e}"}
+
+def strategy_detail():
+    """Human-readable explanation of the ACTIVE strategy for the dashboard's
+    'Strategy' tab."""
+    key = STRATEGY
+    lib = STRATEGY_LIB[key]
+    try:
+        kl = demo_get("/klines", {"symbol": SYMBOL, "interval": KL_INTERVAL, "limit": 300})
+        closes = [float(k[4]) for k in kl] if isinstance(kl, list) else []
+        r = rsi(closes) if closes else None
+        reg_label, reg_score = regime(closes, [float(k[2]) for k in kl], [float(k[3]) for k in kl]) if closes else ("ranging", 0.0)
+    except Exception:
+        r, reg_label, reg_score = None, "ranging", 0.0
+    explainers = {
+        "reversion": "Waits for RSI to fall into the oversold zone and turn UP (momentum flip), then buys, betting price snaps back to the mean. Exits when RSI recovers or hits a structure target. Best in ranging/sideways markets.",
+        "breakout": "Buys only when price closes ABOVE its N-bar high WITH above-average volume and a positive MACD histogram — i.e. a confirmed breakout. Exits on a breakdown below the N-bar low. Best in trending markets.",
+        "ema_trend": "Buys on an EMA 'golden cross' (fast EMA crossing above slow EMA) while price is above the slow EMA. Exits on a 'death cross' or a close below the slow EMA. Trend-following.",
+        "sr_bounce": "Buys when price pulls back to a detected SUPPORT zone with RSI turning up, targeting the nearest RESISTANCE. Structure-based mean reversion.",
+    }
+    return {
+        "key": key,
+        "name": lib["name"],
+        "description": lib["desc"],
+        "how_it_works": explainers.get(key, lib["desc"]),
+        "params": lib["params"],
+        "current_rsi": round(r, 1) if r is not None else None,
+        "regime": reg_label,
+        "regime_score": round(reg_score, 2),
+        "tuned": load_tune(),
+        "all_strategies": {k: {"name": v["name"], "desc": v["desc"], "params": v["params"]}
+                           for k, v in STRATEGY_LIB.items()},
     }
 
 class H(BaseHTTPRequestHandler):
@@ -980,6 +1385,8 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers","Content-Type")
         self.end_headers()
     def do_POST(self):
+        global MANUAL_STATE
+
         # /api/strategy  -> switch active strategy
         # /api/settings  -> update user-controlled settings (e.g. max_capital)
         try:
@@ -1015,6 +1422,116 @@ class H(BaseHTTPRequestHandler):
                 self._send(500, {"ok": False, "error": str(e)})
                 return
             self._send(200, {"ok": True, "max_capital": MAX_CAPITAL})
+        elif self.path in ("/api/symbol",):
+            global SYMBOL, _trail_stop
+            sym = str(body.get("symbol", SYMBOL)).upper()
+            if not sym:
+                self._send(400, {"ok": False, "error": "symbol required"})
+                return
+            SYMBOL = sym
+            _trail_stop = None # reset trailing stop state
+            try:
+                cur = {}
+                if os.path.exists(SETTINGS_FILE):
+                    cur = json.load(open(SETTINGS_FILE))
+                cur["symbol"] = SYMBOL
+                json.dump(cur, open(SETTINGS_FILE, "w"))
+            except Exception as e:
+                self._send(500, {"ok": False, "error": str(e)})
+                return
+            self._send(200, {"ok": True, "symbol": SYMBOL})
+        elif self.path in ("/api/manual-order",):
+            side = str(body.get("side", "")).upper()
+            if side not in ("BUY", "SELL"):
+                self._send(400, {"ok": False, "error": "side must be BUY or SELL"})
+                return
+            sym = body.get("symbol", SYMBOL)
+            price = get_all_prices().get(sym) or demo_price()
+            if price <= 0:
+                self._send(500, {"ok": False, "error": "price feed unavailable"})
+                return
+            
+            _fills = load_fills()
+            sym = body.get("symbol", SYMBOL)
+            btc = 0.0; usdt = float(MAX_CAPITAL)
+            for f in _fills:
+                s = f.get("symbol", SYMBOL)
+                q = float(f["qty"])
+                p = float(f["price"])
+                if f["side"] == "BUY":
+                    if s == sym: btc += q
+                    usdt -= q * p
+                else:
+                    if s == sym: btc -= q
+                    usdt += q * p
+            btc = max(btc, 0.0); usdt = max(usdt, 0.0)
+            oid = None
+            if side == "BUY":
+                notional = min(float(body.get("notional", usdt * 0.95)), usdt * 0.95, MAX_CAPITAL)
+                if notional < SIZE_MIN:
+                    self._send(400, {"ok": False, "error": f"notional {notional:.2f} below min {SIZE_MIN:.2f}"})
+                    return
+                qty = round(notional / price, 6)
+                if qty <= 0:
+                    self._send(400, {"ok": False, "error": "computed qty <= 0"})
+                    return
+                oid = record_manual("BUY", qty, price, symbol=sym)
+                msg = f"MANUAL BUY {qty} @ {price:.2f} (you)"
+                
+                # Save manual state for this new position
+                if sym not in MANUAL_STATE or not isinstance(MANUAL_STATE[sym], dict): MANUAL_STATE[sym] = {}
+                MANUAL_STATE[sym]["auto_manage"] = bool(body.get("auto_manage", True))
+                MANUAL_STATE[sym]["sl"] = body.get("sl")
+                MANUAL_STATE[sym]["tp"] = body.get("tp")
+                try:
+                    cur = {}
+                    if os.path.exists(SETTINGS_FILE): cur = json.load(open(SETTINGS_FILE))
+                    cur["manual"] = MANUAL_STATE
+                    json.dump(cur, open(SETTINGS_FILE, "w"))
+                except Exception: pass
+            else:  # SELL
+                qty = float(body.get("qty", btc))
+                qty = min(qty, btc)
+                if qty <= DUST:
+                    self._send(400, {"ok": False, "error": "no BTC position to sell"})
+                    return
+                qty = round(qty, 6)
+                oid = record_manual("SELL", qty, price, symbol=sym)
+                msg = f"MANUAL SELL {qty} @ {price:.2f} (you)"
+            log(msg)
+            self._send(200, {"ok": True, "order": oid, "side": side,
+                             "qty": qty if side == "SELL" else round(notional / price, 6),
+                             "price": round(price, 2), "actor": "user"})
+        elif self.path in ("/api/manual-update",):
+            sym = body.get("symbol", SYMBOL)
+            if sym not in MANUAL_STATE or not isinstance(MANUAL_STATE[sym], dict): MANUAL_STATE[sym] = {}
+            MANUAL_STATE[sym]["auto_manage"] = bool(body.get("auto_manage", True))
+            MANUAL_STATE[sym]["sl"] = body.get("sl")
+            MANUAL_STATE[sym]["tp"] = body.get("tp")
+            try:
+                cur = {}
+                if os.path.exists(SETTINGS_FILE): cur = json.load(open(SETTINGS_FILE))
+                cur["manual"] = MANUAL_STATE
+                json.dump(cur, open(SETTINGS_FILE, "w"))
+            except Exception: pass
+            self._send(200, {"ok": True})
+        elif self.path in ("/api/exit",):
+            # Liquidate current position instantly
+            _fills = load_fills()
+            sym = body.get("symbol", SYMBOL) if body else SYMBOL
+            btc = 0.0
+            for f in _fills:
+                if f.get("symbol", SYMBOL) == sym:
+                    if f["side"] == "BUY": btc += float(f["qty"])
+                    else: btc -= float(f["qty"])
+            if btc <= DUST:
+                self._send(400, {"ok": False, "error": f"No open {sym} position to exit."})
+                return
+            price = get_all_prices().get(sym) or demo_price()
+            qty = round(btc, 6)
+            oid = record_manual("SELL", qty, price, symbol=sym)
+            log(f"MANUAL EXIT {qty} @ {price:.2f} (you)")
+            self._send(200, {"ok": True, "order": oid, "qty": qty, "price": price})
         else:
             self._send(404, {"ok": False, "error": "not found"})
     def do_GET(self):
@@ -1130,6 +1647,18 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send(500, {"error": str(e)})
 
+        elif self.path in ("/api/scanner",):
+            self._send(200, {"results": SCANNER_RESULTS})
+
+        elif self.path in ("/api/signal",):
+            self._send(200, current_signal())
+
+        elif self.path in ("/api/risk",):
+            self._send(200, current_risk())
+
+        elif self.path in ("/api/strategy-detail",):
+            self._send(200, strategy_detail())
+
         elif self.path.startswith("/api/backtest"):
             try:
                 import urllib.parse as _up
@@ -1165,7 +1694,59 @@ class H(BaseHTTPRequestHandler):
 
     def log_message(self, *a): pass
 
+class DualStackServer(HTTPServer):
+    """Bind on both IPv4 and IPv6 so cloudflared can reach us whether it
+    resolves localhost -> 127.0.0.1 (IPv4) or ::1 (IPv6). The default
+    HTTPServer('0.0.0.0', PORT) only listens on IPv4, so on machines where
+    'localhost' resolves to ::1 the tunnel gets 'connection refused' and the
+    dashboard shows offline even though the bot is running."""
+    address_family = socket.AF_INET6
+    allow_reuse_address = True   # SO_REUSEADDR — lets the socket rebind immediately after crash
+
+    def server_bind(self):
+        # Enable dual-stack (IPv4-mapped IPv6) so the same socket handles
+        # both 127.0.0.1 (cloudflared) and ::1 connections.
+        try:
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        except Exception:
+            pass
+        # SO_REUSEADDR — already set via allow_reuse_address, belt-and-suspenders
+        try:
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        except Exception:
+            pass
+        super().server_bind()
+
+
 if __name__ == "__main__":
+    # Guard: refuse to start if :PORT is already taken (e.g. a second
+    # start.py / orphaned app.py). A silent double-bind caused
+    # ConnectionAbortedError flakiness before.
+    import socket as _sock
+    _s = _sock.socket(_sock.AF_INET6, _sock.SOCK_STREAM)
+    try:
+        _s.setsockopt(_sock.IPPROTO_IPV6, _sock.IPV6_V6ONLY, 0)
+        _s.setsockopt(_sock.SOL_SOCKET, _sock.SO_REUSEADDR, 1)
+    except Exception:
+        pass
+    try:
+        _s.bind(("::", PORT))
+    except OSError as e:
+        log(f"FATAL: port {PORT} already in use ({e}). Another bot is running — exit.")
+        sys.exit(1)
+    finally:
+        _s.close()
+
     threading.Thread(target=trader_loop, daemon=True).start()
-    log(f"API on :{PORT}")
-    HTTPServer(("0.0.0.0", PORT), H).serve_forever()
+    threading.Thread(target=scanner_loop, daemon=True).start()
+    log(f"API on :{PORT} (dual-stack IPv4+IPv6)")
+    # Wrap serve_forever in a retry loop — if a transient socket error kills
+    # the serve loop (e.g. ConnectionAbortedError on Windows), restart the
+    # server in-place rather than dying and leaving the tunnel pointing at a
+    # dead port.
+    while True:
+        try:
+            DualStackServer(("::", PORT), H).serve_forever()
+        except Exception as _srv_err:
+            log(f"WARN: server loop died ({_srv_err}), restarting in 2s ...")
+            time.sleep(2)

@@ -1,1 +1,1 @@
-{"max_capital": 5.0}
+{"max_capital": 10.0, "symbol": "BTCUSDT", "manual": {"BTCUSDT": {"auto_manage": true, "sl": 75000, "tp": 90000}}}
