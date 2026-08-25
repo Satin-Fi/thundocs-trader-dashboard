@@ -21,6 +21,31 @@ import urllib.request
 import urllib.error
 from datetime import datetime
 
+# Load .env explicitly so AI keys work whether the process inherited them
+# from the shell or not (app.py itself does not parse .env).
+def _load_env():
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except Exception:
+        pass
+    # Manual fallback: parse backend/.env if dotenv missing.
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(p):
+        try:
+            for line in open(p, encoding="utf-8"):
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                k, v = k.strip(), v.strip().strip('"').strip("'")
+                if k and not os.getenv(k):
+                    os.environ[k] = v
+        except Exception:
+            pass
+
+_load_env()
+
 TIMEOUT = int(os.getenv("AI_TIMEOUT", "25"))
 
 
@@ -32,25 +57,42 @@ def _post_json(url, headers, payload, timeout=TIMEOUT):
         return json.loads(r.read().decode())
 
 
-def _openrouter(prompt, model):
+def _openrouter(prompt, model=None):
     key = os.getenv("OPENROUTER_API_KEY")
     if not key:
         return None
-    try:
-        data = _post_json(
-            "https://openrouter.ai/api/v1/chat/completions",
-            {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {key}",
-                "HTTP-Referer": "https://thundocs-trader-dashboard",
-                "X-Title": "PaperTrader-AI",
-            },
-            {"model": model, "messages": [{"role": "user", "content": prompt}],
-             "max_tokens": 120, "temperature": 0.2},
-        )
-        return data["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return None
+    # Free `:free` slugs rotate rate-limits; try a priority list so one being
+    # 429'd falls through to the next working free model.
+    models = [model] if model else []
+    models += [
+        "nvidia/nemotron-3-super-120b-a12b:free",
+        "minimax/minimax-m2.7:free",
+        "z-ai/glm-5.2:free",
+        "google/gemma-4-31b-it:free",
+        "cohere/north-mini-code:free",
+        "liquid/lfm-2.5-2.6b:free",
+    ]
+    last_err = None
+    for m in models:
+        try:
+            data = _post_json(
+                "https://openrouter.ai/api/v1/chat/completions",
+                {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {key}",
+                    "HTTP-Referer": "https://thundocs-trader-dashboard",
+                    "X-Title": "PaperTrader-AI",
+                },
+                {"model": m, "messages": [{"role": "user", "content": prompt}],
+                 "max_tokens": 120, "temperature": 0.2},
+            )
+            txt = data["choices"][0]["message"]["content"].strip()
+            if txt:
+                return txt
+        except Exception as e:
+            last_err = e
+            continue
+    return None
 
 
 def _groq(prompt, model):
@@ -73,17 +115,22 @@ def _huggingface(prompt):
     key = os.getenv("HF_TOKEN")
     if not key:
         return None
+    # Native HF serverless text-generation route (works with free tokens;
+    # the /v1/chat/completions sub-path is unreliable on serverless).
     try:
         data = _post_json(
-            "https://api-inference.huggingface.co/models/meta-llama/Llama-3.2-3B-Instruct/v1/chat/completions",
+            "https://api-inference.huggingface.co/models/meta-llama/Llama-3.2-3B-Instruct",
             {"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
-            {"model": "meta-llama/Llama-3.2-3B-Instruct",
-             "messages": [{"role": "user", "content": prompt}],
-             "max_tokens": 120, "temperature": 0.2},
+            {"inputs": prompt, "parameters": {"max_new_tokens": 120, "temperature": 0.2,
+                                              "return_full_text": False}},
         )
-        if "choices" in data:
-            return data["choices"][0]["message"]["content"].strip()
-        return None
+        if isinstance(data, list) and data:
+            txt = data[0].get("generated_text", "")
+        elif isinstance(data, dict):
+            txt = data.get("generated_text", "")
+        else:
+            txt = ""
+        return txt.strip() or None
     except Exception:
         return None
 
@@ -141,7 +188,7 @@ def ai_verdict(signal, ctx):
 
     # Try cloud providers (free tiers) in order of reliability.
     for getter, (provider, model) in (
-        (_openrouter, ("openrouter", os.getenv("AI_MODEL", "meta-llama/llama-3.1-8b-instruct:free"))),
+        (_openrouter, ("openrouter", os.getenv("AI_MODEL", "auto"))),
         (_groq, ("groq", os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"))),
         (_huggingface, ("huggingface", "meta-llama/Llama-3.2-3B-Instruct")),
     ):
