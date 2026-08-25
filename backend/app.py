@@ -673,6 +673,36 @@ def record_manual(side, qty, price, symbol=None):
 
 # last realized exit (reason + price + ts) — surfaced on the dashboard so the
 # user can see WHY the bot closed the previous trade (RSI / TP / SL / time-stop).
+# last AI second-opinion verdict (surfaced on dashboard + used to gate entries)
+_last_ai = None
+def set_last_ai(v):
+    global _last_ai
+    _last_ai = v
+def get_last_ai():
+    return _last_ai
+
+def _safe_ai(signal, ctx, timeout=18):
+    """Call the free AI verdict without ever blocking the dashboard/loop.
+    Runs in a worker thread; returns a graceful default on timeout."""
+    import threading
+    box = {}
+    def runner():
+        try:
+            from ai_provider import ai_verdict
+            box["v"] = ai_verdict(signal, ctx)
+        except Exception as e:
+            box["v"] = {"verdict": "CONFIRM", "reason": f"ai error: {e}",
+                        "provider": "error", "model": "none",
+                        "ts": dt.datetime.now().isoformat(), "signal": signal}
+    t = threading.Thread(target=runner, daemon=True)
+    t.start()
+    t.join(timeout)
+    if "v" in box:
+        return box["v"]
+    return {"verdict": "PENDING", "reason": "ai timeout (using technical signal)",
+            "provider": "timeout", "model": "none",
+            "ts": dt.datetime.now().isoformat(), "signal": signal}
+
 _last_exit = None
 def _record_exit(reason, price):
     global _last_exit
@@ -743,10 +773,26 @@ def tick():
             p = STRATEGY_PARAMS
             if qty_held < DUST:
                 if sym != SYMBOL: continue # Only hunt for entries on chart symbol
-                sig, reason = gen_signal(closes, vols, len(closes)-1, 0, 0.0, 0, p, STRATEGY, sr, atr_val=cur_atr, regime_label=reg_label)
+                sig, reason = gen_signal(closes, vols, len(closes)-1, 0, 0, 0.0, 0, p, STRATEGY, sr, atr_val=cur_atr, regime_label=reg_label)
                 trailing_stop_reset()
-                
+
                 if sig == "BUY" and cash >= SIZE_MIN:
+                    # --- FREE AI SECOND OPINION before risking capital ---
+                    try:
+                        from ai_provider import ai_verdict
+                        ai = ai_verdict("BUY", {"symbol": sym, "position": "flat",
+                            "rsi": rsi(closes), "regime": reg_label, "price": price,
+                            "support": sr[1] if sr else None, "resistance": sr[0] if sr else None,
+                            "strategy": STRATEGY})
+                        if ai["verdict"] == "REJECT":
+                            log(f"AI({ai['provider']}) REJECTED BUY {sym}: {ai['reason']}")
+                            sig = "HOLD"; reason = f"AI rejected: {ai['reason']}"
+                            set_last_ai(ai)
+                        else:
+                            set_last_ai(ai)
+                    except Exception as e:
+                        log(f"ai_verdict skipped: {e}")
+                    # ---------------------------------------------------------
                     notional = min(float(MAX_CAPITAL), max(10.0, cash * 0.95))
                     if notional >= SIZE_MIN:
                         qty = round(notional / price, 6)
@@ -1208,7 +1254,8 @@ def make_state():
         "trailing_stop": _trail_stop,
         "updated": dt.datetime.now().isoformat(),
         "pnl_by_actor": pnl_by_actor(fills, prices),
-        "manual_state": MANUAL_STATE.get(SYMBOL, {})
+        "manual_state": MANUAL_STATE.get(SYMBOL, {}),
+        "ai": get_last_ai(),
     }
 
 
@@ -1253,6 +1300,10 @@ def current_signal():
             "strategy_name": STRATEGY_LIB[STRATEGY]["name"],
             "price": round(price, 2),
             "position": "LONG" if pos else "FLAT",
+            "ai": (lambda: (_safe_ai(sig, {"symbol": SYMBOL, "position": "LONG" if pos else "FLAT",
+                        "rsi": round(r, 1), "regime": reg_label, "price": round(price, 2),
+                        "support": sr[1] if sr else None, "resistance": sr[0] if sr else None,
+                        "strategy": STRATEGY})))(),
         }
     except Exception as e:
         return {"signal": "HOLD", "reason": f"error: {e}", "rsi": None,

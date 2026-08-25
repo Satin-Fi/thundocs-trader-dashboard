@@ -25,7 +25,7 @@ export default function StrategyExplainer() {
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 1.2fr) minmax(260px, 1fr)', gap: 18, alignItems: 'start' }}>
-      <div style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 10, padding: 18 }}>
+      <div className="panel" style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 10, padding: 18 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
           <span className="dot-indicator" style={{ background: 'var(--accent)' }} />
           <span className="card-title">{stratName ?? 'Strategy'}</span>
@@ -64,7 +64,7 @@ export default function StrategyExplainer() {
       </div>
 
       {/* Strategy selector + regime context */}
-      <div style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 10, padding: 16 }}>
+      <div className="panel" style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 10, padding: 16 }}>
         <div className="card-title" style={{ marginBottom: 12 }}>All Strategies</div>
         {detail && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

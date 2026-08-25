@@ -103,7 +103,7 @@ export default function ManualTrade({ state, fills }: { state: State | null; fil
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 1.2fr) minmax(280px, 1fr)', gap: 16, alignItems: 'start' }}>
       {/* Left: Order Execution & Live Position Rules */}
-      <div style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 18 }}>
+      <div className="panel" style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 18 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
           <div className="card-title">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -306,7 +306,7 @@ export default function ManualTrade({ state, fills }: { state: State | null; fil
       </div>
 
       {/* Right: You vs Bot attribution card */}
-      <div style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 18 }}>
+      <div className="panel" style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', padding: 18 }}>
         <div className="card-title" style={{ marginBottom: 14 }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 20v-6M6 20V10M18 20V4"/>
@@ -375,4 +375,5 @@ function AttributionCard({ label, data, accent }: { label: React.ReactNode; data
       </div>
     </div>
   )
-}
+}
+

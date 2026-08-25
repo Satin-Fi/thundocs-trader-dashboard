@@ -86,6 +86,8 @@ body {
 
 .card-bezel:hover {
   border-color: var(--border-strong);
+  box-shadow: inset 0 1px 0 var(--border-highlight), 0 8px 28px rgba(0, 0, 0, 0.5);
+  transform: translateY(-1px);
 }
 
 .card-inner {
@@ -934,8 +936,8 @@ body {
 .tab-btn.active {
   background: var(--surface);
   color: var(--text);
-  border-color: var(--border-strong);
-  box-shadow: inset 0 1px 0 var(--border-highlight);
+  border-color: var(--accent-border);
+  box-shadow: inset 0 1px 0 var(--border-highlight), 0 0 0 1px var(--accent-border), 0 4px 14px -6px var(--accent-soft);
 }
 
 .strat-config-card {
@@ -1205,6 +1207,17 @@ tbody tr:hover td {
   text-align: center;
   color: var(--muted);
   font-size: 13px;
+}
+
+/* Reusable panel surface for feature cards (Signal/Risk, Manual, Strategy).
+   Subtle hover lift + accent edge for a more "alive" feel. */
+.panel {
+  transition: border-color 0.25s var(--ease-spring), box-shadow 0.25s var(--ease-spring), transform 0.25s var(--ease-spring);
+}
+.panel:hover {
+  border-color: var(--border-strong) !important;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  transform: translateY(-1px);
 }
 
 /* Toast Message */

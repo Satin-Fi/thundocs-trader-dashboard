@@ -25,7 +25,7 @@ export default function SignalRisk() {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 1fr) minmax(280px, 1fr)', gap: 18, alignItems: 'start' }}>
       {/* Current signal */}
-      <div style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 10, padding: 16 }}>
+      <div className="panel" style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 10, padding: 16 }}>
         <div className="card-title" style={{ marginBottom: 12 }}>Current Trade Signal</div>
         {signal ? (
           <>
@@ -39,6 +39,30 @@ export default function SignalRisk() {
             <div style={{ fontSize: 13, color: 'var(--text)', fontFamily: 'var(--mono)', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px', marginBottom: 10 }}>
               “{signal.reason}”
             </div>
+
+            {/* FREE AI second-opinion on the current signal */}
+            {signal.ai && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, padding: '9px 11px',
+                borderRadius: 8, border: `1px solid ${signal.ai.verdict === 'REJECT' ? 'var(--negative)' : signal.ai.verdict === 'PENDING' ? 'var(--border)' : 'var(--accent)'}`,
+                background: signal.ai.verdict === 'REJECT' ? 'rgba(255,90,90,0.08)' : signal.ai.verdict === 'PENDING' ? 'var(--bg)' : 'rgba(45,212,138,0.08)',
+              }}>
+                <span style={{
+                  fontSize: 11, fontWeight: 800, padding: '3px 8px', borderRadius: 5,
+                  color: signal.ai.verdict === 'REJECT' ? '#fff' : signal.ai.verdict === 'PENDING' ? 'var(--muted)' : '#04130b',
+                  background: signal.ai.verdict === 'REJECT' ? 'var(--negative)' : signal.ai.verdict === 'PENDING' ? 'var(--bg-subtle)' : 'var(--accent)',
+                }}>
+                  {signal.ai.verdict}
+                </span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, color: 'var(--text-2)' }}>{signal.ai.reason}</div>
+                  <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>
+                    🤖 AI: {signal.ai.provider} · {signal.ai.model}
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--muted)' }}>
               <span>RSI: <b style={{ color: 'var(--text-2)' }}>{signal.rsi ?? '—'}</b></span>
               <span>Regime: <b style={{ color: 'var(--text-2)' }}>{signal.regime ?? '—'}</b></span>
@@ -49,7 +73,7 @@ export default function SignalRisk() {
       </div>
 
       {/* Why not trading + entry risk */}
-      <div style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 10, padding: 16 }}>
+      <div className="panel" style={{ background: 'var(--bg-subtle)', border: '1px solid var(--border)', borderRadius: 10, padding: 16 }}>
         <div className="card-title" style={{ marginBottom: 12 }}>Why Not Trading &amp; Entry Risk</div>
         {risk ? (
           <>

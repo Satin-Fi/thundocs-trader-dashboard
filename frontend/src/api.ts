@@ -109,6 +109,14 @@ export interface Backtest { days: number; interval: string; symbol: string; resu
 export const fetchBacktest = (days = 30) => get<Backtest>(`/api/backtest?days=${days}`)
 
 // ---- New: manual trading, signal, risk, strategy explainer ----
+export interface AiVerdict {
+  verdict: 'CONFIRM' | 'REJECT' | 'PENDING'
+  reason: string
+  provider: string
+  model: string
+  ts: string
+  signal: string
+}
 export interface Signal {
   signal: 'BUY' | 'SELL' | 'HOLD'
   reason: string
@@ -119,6 +127,7 @@ export interface Signal {
   strategy_name: string
   price: number
   position: string
+  ai?: AiVerdict | null
 }
 export const fetchSignal = () => get<Signal>('/api/signal')
 
