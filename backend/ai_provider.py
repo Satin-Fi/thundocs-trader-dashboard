@@ -50,8 +50,11 @@ TIMEOUT = int(os.getenv("AI_TIMEOUT", "25"))
 
 
 def _post_json(url, headers, payload, timeout=TIMEOUT):
+    # Some free providers (Groq) reject the default urllib User-Agent with 403.
+    h = dict(headers)
+    h.setdefault("User-Agent", "Mozilla/5.0 (PaperTrader-AI)")
     req = urllib.request.Request(
-        url, data=json.dumps(payload).encode(), headers=headers, method="POST"
+        url, data=json.dumps(payload).encode(), headers=h, method="POST"
     )
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode())
@@ -95,20 +98,27 @@ def _openrouter(prompt, model=None):
     return None
 
 
-def _groq(prompt, model):
+def _groq(prompt, model=None):
     key = os.getenv("GROQ_API_KEY")
     if not key:
         return None
-    try:
-        data = _post_json(
-            "https://api.groq.com/openai/v1/chat/completions",
-            {"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
-            {"model": model, "messages": [{"role": "user", "content": prompt}],
-             "max_tokens": 120, "temperature": 0.2},
-        )
-        return data["choices"][0]["message"]["content"].strip()
-    except Exception:
-        return None
+    # Try a small list of Groq-free chat models (slug availability rotates).
+    models = [model] if model else []
+    models += ["qwen/qwen3.8-27b", "qwen/qwen3.6-27b", "openai/gpt-oss-20b"]
+    for m in models:
+        try:
+            data = _post_json(
+                "https://api.groq.com/openai/v1/chat/completions",
+                {"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+                {"model": m, "messages": [{"role": "user", "content": prompt}],
+                 "max_tokens": 120, "temperature": 0.2},
+            )
+            txt = data["choices"][0]["message"]["content"].strip()
+            if txt:
+                return txt
+        except Exception:
+            continue
+    return None
 
 
 def _huggingface(prompt):
@@ -188,8 +198,8 @@ def ai_verdict(signal, ctx):
 
     # Try cloud providers (free tiers) in order of reliability.
     for getter, (provider, model) in (
+        (_groq, ("groq", os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b"))),
         (_openrouter, ("openrouter", os.getenv("AI_MODEL", "auto"))),
-        (_groq, ("groq", os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"))),
         (_huggingface, ("huggingface", "meta-llama/Llama-3.2-3B-Instruct")),
     ):
         try:
