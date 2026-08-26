@@ -184,3 +184,58 @@ export const postExitPosition = (symbol?: string) =>
 export interface ScannerResult { symbol: string; rsi: number; priceChange: number; state: string; price: number }
 export const fetchScanner = () => get<{ results: ScannerResult[] }>('/api/scanner')
 
+export interface AgentInfo {
+  id: string
+  name: string
+  tag: string
+  role: string
+  icon: string
+  status?: string
+  summary?: string
+  indicators?: string[]
+  stance?: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
+  thesis?: string
+  action?: string
+  size_fraction?: number
+  strategy?: string
+  decision?: string
+  confidence_pct?: number
+  rating?: number
+  rationale?: string
+}
+
+export interface TAVerdict {
+  signal: 'BUY' | 'SELL' | 'HOLD'
+  rating: number
+  confidence: number
+  reasoning: string
+  agents?: Record<string, AgentInfo>
+  analyst_summaries?: Record<string, string>
+  bull_case?: string
+  bear_case?: string
+  entry_reference_price?: number | null
+  target_price?: number | null
+  stop_loss?: number | null
+  ticker: string
+  analysis_date?: string
+  ts: string | null
+  elapsed_s?: number
+  provider?: string
+  deep_model?: string
+  fast_model?: string
+  router_url?: string
+  interval_hours?: number
+  enabled?: boolean
+  is_analyzing?: boolean
+  recent_steps?: Array<{ time: string; agent: string; text: string }>
+  error?: string
+}
+
+export const fetchTAVerdict = () => get<TAVerdict>('/api/ta-verdict')
+
+export const postTriggerTARun = () =>
+  get<{ ok: boolean; started: boolean; message: string }>('/api/ta-run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })

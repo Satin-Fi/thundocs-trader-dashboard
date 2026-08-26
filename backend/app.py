@@ -773,8 +773,43 @@ def tick():
             p = STRATEGY_PARAMS
             if qty_held < DUST:
                 if sym != SYMBOL: continue # Only hunt for entries on chart symbol
+
+                # ── TradingAgents LLM Brain (primary signal) ───────────────────────
+                ta_sig, ta_reason = "UNKNOWN", ""
+                try:
+                    from ta_engine import get_ta_verdict
+                    tv = get_ta_verdict()
+                    if tv and tv.get("signal"):
+                        ta_sig    = tv["signal"]          # BUY / SELL / HOLD
+                        ta_reason = (f"TA({tv.get('deep_model','?')}) "
+                                     f"rating={tv.get('rating',0)}/5 — "
+                                     f"{tv.get('reasoning','')[:120]}")
+                        log(f"TA verdict: {ta_sig} (rating {tv.get('rating',0)}/5)")
+                except Exception as _te:
+                    log(f"TA verdict read error: {_te}")
+
+                # ── Rule-based fallback (always computed for comparison) ────────────
                 sig, reason = gen_signal(closes, vols, len(closes)-1, 0, 0, 0.0, 0, p, STRATEGY, sr, atr_val=cur_atr, regime_label=reg_label)
                 trailing_stop_reset()
+
+                # ── Signal decision logic ──────────────────────────────────────────
+                if ta_sig == "BUY":
+                    # TA says BUY → override rule-based, proceed to entry
+                    sig = "BUY"
+                    reason = f"TA-BRAIN: {ta_reason}"
+                elif ta_sig == "SELL":
+                    # TA says SELL → stay flat (don't enter)
+                    sig = "HOLD"
+                    reason = f"TA-BRAIN blocked entry (bearish): {ta_reason[:80]}"
+                elif ta_sig == "HOLD":
+                    # TA says HOLD → only enter if rule-based also says BUY (confluence)
+                    if sig != "BUY":
+                        reason = f"TA-BRAIN: HOLD, rule-based: {reason}"
+                    else:
+                        reason = f"Confluence BUY — TA:HOLD rule:{reason}"
+                else:
+                    # TA unavailable — fall through to pure rule-based
+                    pass
 
                 if sig == "BUY" and cash >= SIZE_MIN:
                     # --- FREE AI SECOND OPINION before risking capital ---
@@ -808,6 +843,7 @@ def tick():
                             oid = f"paper-bot-{int(time.time()*1000)}"
                             record_fill("BUY", qty, price, oid, actor="bot", symbol=sym)
                             log(f"BOT PAPER BUY {sym} {qty} @ {price:.2f} ({reason})")
+
             else:
                 f_sym = [f for f in _fills if f.get("symbol", SYMBOL) == sym]
                 fb = [f for f in f_sym if f["side"] == "BUY"]
@@ -820,7 +856,7 @@ def tick():
                 sl = m_state.get("sl")
                 tp = m_state.get("tp")
                 auto = m_state.get("auto_manage", True)
-                
+
                 if sl and price <= float(sl):
                     sig, reason = "SELL", f"Stop Loss Hit @ ${price:.2f} (Target SL: ${float(sl):.2f})"
                 elif tp and price >= float(tp):
@@ -828,9 +864,22 @@ def tick():
                 elif auto:
                     trailing_stop_update(entry, cur_atr, price)
                     sig, reason = gen_signal(closes, vols, len(closes)-1, 1, entry, held, p, STRATEGY, sr, atr_val=cur_atr, regime_label=reg_label)
+                    # ── TA exit override: if TA says SELL and rating is very bearish ──
+                    if sig == "HOLD":
+                        try:
+                            from ta_engine import get_ta_verdict
+                            tv = get_ta_verdict()
+                            if tv and tv.get("signal") == "SELL" and tv.get("rating", 5) <= 2:
+                                sig    = "SELL"
+                                reason = (f"TA-BRAIN exit (rating {tv.get('rating',0)}/5): "
+                                          f"{tv.get('reasoning','')[:100]}")
+                                log(f"TA triggered exit: {reason[:80]}")
+                        except Exception:
+                            pass
                 else:
                     sig, reason = "HOLD", "Auto-Manage OFF"
-                
+
+
                 if sig == "SELL":
                     sq = round(qty_held, 6)
                     if has_keys:
@@ -1583,6 +1632,16 @@ class H(BaseHTTPRequestHandler):
             oid = record_manual("SELL", qty, price, symbol=sym)
             log(f"MANUAL EXIT {qty} @ {price:.2f} (you)")
             self._send(200, {"ok": True, "order": oid, "qty": qty, "price": price})
+        elif self.path in ("/api/ta-run",):
+            try:
+                from ta_engine import is_analyzing, trigger_ta_analysis_async
+                if is_analyzing():
+                    self._send(200, {"ok": True, "started": False, "message": "Multi-agent analysis is already running."})
+                else:
+                    started = trigger_ta_analysis_async()
+                    self._send(200, {"ok": True, "started": started, "message": "Multi-agent analysis started."})
+            except Exception as e:
+                self._send(500, {"ok": False, "error": str(e)})
         else:
             self._send(404, {"ok": False, "error": "not found"})
     def do_GET(self):
@@ -1701,6 +1760,31 @@ class H(BaseHTTPRequestHandler):
         elif self.path in ("/api/scanner",):
             self._send(200, {"results": SCANNER_RESULTS})
 
+        elif self.path in ("/api/ta-verdict",):
+            try:
+                from ta_engine import get_ta_verdict, OPENROUTER_API_KEY, ROUTER_BASE_URL, ROUTER_DEEP_MODEL, ROUTER_FAST_MODEL, TA_INTERVAL_HOURS
+                verdict = get_ta_verdict()
+                if verdict:
+                    self._send(200, verdict)
+                else:
+                    self._send(200, {
+                        "signal": "HOLD", "rating": 0,
+                        "reasoning": "No analysis yet — first cycle starts automatically." if OPENROUTER_API_KEY else
+                                     "TradingAgents disabled. Set OPENROUTER_API_KEY in backend/.env",
+                        "analyst_summaries": {},
+                        "ts": None, "ticker": SYMBOL,
+                        "enabled": bool(OPENROUTER_API_KEY),
+                        "provider": "openrouter",
+                        "deep_model": ROUTER_DEEP_MODEL,
+                        "fast_model": ROUTER_FAST_MODEL,
+                        "router_url": ROUTER_BASE_URL,
+                        "interval_hours": TA_INTERVAL_HOURS,
+                    })
+            except Exception as e:
+                self._send(200, {"signal": "HOLD", "rating": 0,
+                                 "reasoning": f"TA engine error: {e}", "ts": None,
+                                 "enabled": False})
+
         elif self.path in ("/api/signal",):
             self._send(200, current_signal())
 
@@ -1790,6 +1874,12 @@ if __name__ == "__main__":
 
     threading.Thread(target=trader_loop, daemon=True).start()
     threading.Thread(target=scanner_loop, daemon=True).start()
+    # Start TradingAgents LLM brain loop (requires OPENROUTER_API_KEY in .env)
+    try:
+        from ta_engine import start_ta_loop
+        start_ta_loop()
+    except Exception as _ta_err:
+        log(f"TA engine not started: {_ta_err}")
     log(f"API on :{PORT} (dual-stack IPv4+IPv6)")
     # Wrap serve_forever in a retry loop — if a transient socket error kills
     # the serve loop (e.g. ConnectionAbortedError on Windows), restart the

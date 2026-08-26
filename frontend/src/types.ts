@@ -2,7 +2,6 @@ export interface State {
   symbol: string
   price: number
   usdt: number
-  
   realized: number
   net_pnl: number
   total_funds: number
@@ -68,4 +67,159 @@ export interface Fill {
   price: number | string
   order: number | string
   actor?: string
+}
+
+export interface Indicators {
+  interval: string
+  times: number[]
+  rsi: (number | null)[]
+  ema20: number[]
+  ema50: number[]
+  macd_line: number[]
+  macd_signal: number[]
+  macd_hist: number[]
+  breakout_upper: (number | null)[]
+  breakout_lower: (number | null)[]
+  sr_zones: { level: number; type: 'S' | 'R'; strength: number; touches: number }[]
+  signal: 'BUY' | 'SELL' | 'HOLD'
+  signal_reason: string
+  strategy: string
+  strategy_params: Record<string, number>
+}
+
+export interface AiVerdict {
+  verdict: 'CONFIRM' | 'REJECT' | 'PENDING'
+  reason: string
+  provider: string
+  model: string
+  ts: string
+  signal: string
+}
+
+export interface Signal {
+  signal: 'BUY' | 'SELL' | 'HOLD'
+  reason: string
+  rsi: number | null
+  regime: string | null
+  regime_score: number
+  strategy: string
+  strategy_name: string
+  price: number
+  position: string
+  ai?: AiVerdict | null
+}
+
+export interface Risk {
+  trading_blocked: boolean
+  block_reasons: string[]
+  signal: string
+  regime: string
+  regime_score: number
+  rsi: number
+  atr: number | null
+  entry_risk: { sl_price: number; tp_price: number; risk_pct: number; reward_pct: number; rr: number }
+  available_usdt: number
+  flat: boolean
+}
+
+export interface StrategyDetail {
+  key: string
+  name: string
+  description: string
+  how_it_works: string
+  params: Record<string, number>
+  current_rsi: number | null
+  regime: string
+  regime_score: number
+  tuned: { ts: string; applied: boolean; best?: { strategy: string; test_ret?: number } } | null
+  all_strategies: Record<string, { name: string; desc: string; params: Record<string, number> }>
+}
+
+export interface Analytics {
+  round_trips: number
+  wins: number
+  losses: number
+  win_rate: number
+  profit_factor: number
+  avg_win: number
+  avg_loss: number
+  avg_hold_min: number
+  max_drawdown: number
+  expectancy: number
+  largest_win: number
+  largest_loss: number
+  per_strategy: Record<string, number>
+}
+
+export interface BacktestRow {
+  strategy: string
+  params: Record<string, number>
+  ret: number
+  win_rate: number
+  trades: number
+  wins: number
+  losses: number
+  max_dd: number
+}
+
+export interface Backtest {
+  days: number
+  interval: string
+  symbol: string
+  results: BacktestRow[]
+}
+
+export interface ScannerResult {
+  symbol: string
+  rsi: number
+  priceChange: number
+  state: string
+  price: number
+}
+
+export interface AgentInfo {
+  id: string
+  name: string
+  tag: string
+  role: string
+  icon: string
+  status?: string
+  summary?: string
+  indicators?: string[]
+  stance?: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
+  thesis?: string
+  action?: string
+  size_fraction?: number
+  strategy?: string
+  decision?: string
+  confidence_pct?: number
+  rating?: number
+  rationale?: string
+}
+
+export interface TAVerdict {
+  signal: 'BUY' | 'SELL' | 'HOLD'
+  rating: number
+  confidence: number
+  reasoning: string
+  agents?: Record<string, AgentInfo>
+  analyst_summaries?: Record<string, string>
+  bull_case?: string
+  bear_case?: string
+  entry_reference_price?: number | null
+  target_price?: number | null
+  stop_loss?: number | null
+  ticker: string
+  analysis_date?: string
+  ts: string | null
+  elapsed_s?: number
+  provider?: string
+  deep_model?: string
+  fast_model?: string
+  router_url?: string
+  interval_hours?: number
+  enabled?: boolean
+  is_analyzing?: boolean
+  recent_steps?: Array<{ time: string; agent: string; text: string }>
+  error?: string
 }

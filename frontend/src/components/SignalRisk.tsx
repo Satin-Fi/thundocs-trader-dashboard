@@ -57,7 +57,7 @@ export default function SignalRisk() {
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 12, color: 'var(--text-2)' }}>{signal.ai.reason}</div>
                   <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>
-                    🤖 AI: {signal.ai.provider} · {signal.ai.model}
+                    AI Gate: {signal.ai.provider} · {signal.ai.model}
                   </div>
                 </div>
               </div>

@@ -1,48 +1,48 @@
 {
-  "ts": "2026-08-25T03:40:57.786751",
+  "ts": "2026-08-26T15:51:42.765287",
   "method": "walk-forward 70/30 (per strategy, OOS)",
   "current": {
-    "strategy": "reversion",
+    "strategy": "breakout",
     "params": {
-      "entry_ceil": 45,
-      "exit_rsi": 55
+      "lookback": 30,
+      "vol_mult": 1.8
     },
-    "test_ret": -0.25
+    "test_ret": -1.82
   },
   "best": {
-    "strategy": "reversion",
+    "strategy": "breakout",
     "params": {
-      "entry_ceil": 40,
-      "exit_rsi": 55
+      "lookback": 30,
+      "vol_mult": 1.8
     },
-    "train_ret": -0.24,
-    "test_ret": -0.25,
-    "trades": 5,
-    "win_rate": 40.0
+    "train_ret": -0.36,
+    "test_ret": 0.0,
+    "trades": 0,
+    "win_rate": 0.0
   },
-  "applied": false,
+  "applied": true,
   "candidates": [
+    {
+      "strategy": "breakout",
+      "params": {
+        "lookback": 30,
+        "vol_mult": 1.8
+      },
+      "train_ret": -0.36,
+      "test_ret": 0.0,
+      "trades": 0,
+      "win_rate": 0.0
+    },
     {
       "strategy": "reversion",
       "params": {
         "entry_ceil": 40,
         "exit_rsi": 55
       },
-      "train_ret": -0.24,
-      "test_ret": -0.25,
-      "trades": 5,
-      "win_rate": 40.0
-    },
-    {
-      "strategy": "breakout",
-      "params": {
-        "lookback": 25,
-        "vol_mult": 1.3
-      },
-      "train_ret": 3.19,
-      "test_ret": -0.73,
-      "trades": 5,
-      "win_rate": 20.0
+      "train_ret": -0.22,
+      "test_ret": -1.82,
+      "trades": 6,
+      "win_rate": 16.7
     }
   ]
 }

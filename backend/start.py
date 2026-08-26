@@ -68,6 +68,19 @@ API_HOST = "api.trycloudflare.com"
 procs = []
 
 
+def _port_in_use(port):
+    """Return True if anything is already LISTENING on TCP :port (Windows)."""
+    try:
+        r = subprocess.run(["netstat", "-ano"], capture_output=True,
+                            text=True, timeout=5)
+        for line in r.stdout.splitlines():
+            if f":{port} " in line and "LISTENING" in line:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
@@ -290,6 +303,12 @@ if __name__ == "__main__":
                     sys.exit(1)
                 except OSError:
                     pass  # stale lock, ignore and overwrite
+        # Belt-and-suspenders: if a bot is ALREADY serving :PORT (orphan from a
+        # prior run whose lock we deleted), refuse rather than stacking a 2nd.
+        if _port_in_use(int(PORT)):
+            log(f"REFUSING: port {PORT} is already in use (a bot is already "
+                f"running). Kill it or free the port before starting a new instance.")
+            sys.exit(1)
         with open(LOCK, "w") as _lf:
             _lf.write(str(os.getpid()))
     except Exception:
