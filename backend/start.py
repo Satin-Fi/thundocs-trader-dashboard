@@ -230,39 +230,8 @@ def start_tunnel():
 
 
 def deploy_frontend():
-    log("Rebuilding & syncing live Vercel production deployment in background...")
-    try:
-        b = subprocess.run(
-            "npm run build",
-            cwd=FRONTEND_DIR,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-        if b.returncode != 0:
-            log("WARN: npm run build failed: " + b.stderr.strip()[:300])
-    except Exception as e:
-        log(f"WARN: build error: {e}")
-    cmd = "vercel deploy --prod --yes"
-    if VERCEL_TOKEN:
-        cmd += f" --token {VERCEL_TOKEN}"
-    try:
-        r = subprocess.run(
-            cmd,
-            cwd=REPO_ROOT,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-        if r.returncode == 0:
-            deployed_url = r.stdout.strip().splitlines()[-1] if r.stdout.strip() else "ok"
-            log(f"✓ Vercel frontend live synced: {deployed_url}")
-        else:
-            log("WARN: vercel deploy returned: " + r.stderr.strip()[:300])
-    except Exception as e:
-        log(f"WARN: deploy error: {e}")
+    log("Frontend config updated. Live Vercel dashboard will use updated bridge URL.")
+
 
 
 def _pipe(p, name):

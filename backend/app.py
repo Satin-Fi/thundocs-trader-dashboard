@@ -1794,6 +1794,35 @@ class H(BaseHTTPRequestHandler):
         elif self.path in ("/api/strategy-detail",):
             self._send(200, strategy_detail())
 
+        elif self.path in ("/api/multi-agents",):
+            try:
+                from multi_agent_executor import get_agent_registry
+                self._send(200, get_agent_registry())
+            except Exception as e:
+                self._send(500, {"error": str(e)})
+
+        elif self.path.startswith("/api/quantharness/backtest"):
+            try:
+                from quantharness_engine import run_quantharness_backtest
+                kl = demo_get("/klines", {"symbol": SYMBOL, "interval": KL_INTERVAL, "limit": 500})
+                if not isinstance(kl, list) or len(kl) < 40:
+                    self._send(400, {"error": "Insufficient candle history"})
+                else:
+                    candles = [{"close": float(k[4]), "high": float(k[2]), "low": float(k[3]), "volume": float(k[5]), "time": k[0]} for k in kl]
+                    bt_res = run_quantharness_backtest(candles)
+                    self._send(200, bt_res)
+            except Exception as e:
+                self._send(500, {"error": str(e)})
+
+        elif self.path.startswith("/api/quantharness/patterns"):
+            try:
+                from quantharness_engine import detect_chart_patterns
+                kl = demo_get("/klines", {"symbol": SYMBOL, "interval": KL_INTERVAL, "limit": 40})
+                candles = [{"close": float(k[4]), "high": float(k[2]), "low": float(k[3]), "volume": float(k[5])} for k in kl]
+                self._send(200, detect_chart_patterns(candles))
+            except Exception as e:
+                self._send(500, {"error": str(e)})
+
         elif self.path.startswith("/api/backtest"):
             try:
                 import urllib.parse as _up
@@ -1874,6 +1903,12 @@ if __name__ == "__main__":
 
     threading.Thread(target=trader_loop, daemon=True).start()
     threading.Thread(target=scanner_loop, daemon=True).start()
+    try:
+        from multi_agent_executor import start_multi_agent_executor
+        start_multi_agent_executor()
+        log("Multi-Agent High-Frequency Execution Grid started (5 agents hunting 20 pairs)")
+    except Exception as _mag_err:
+        log(f"Multi-Agent Executor error: {_mag_err}")
     # Start TradingAgents LLM brain loop (requires OPENROUTER_API_KEY in .env)
     try:
         from ta_engine import start_ta_loop

@@ -179,6 +179,20 @@ export default function App() {
     }
   }
 
+  // Manual reconnect when the tunnel drops (coherent with the offline badge)
+  const reconnect = async () => {
+    setOnline(false)
+    try {
+      const s = await fetchState()
+      setState(s)
+      setOnline(true)
+      setConnErr(null)
+    } catch {
+      setOnline(false)
+      setConnErr('Still offline — check python start.py')
+    }
+  }
+
   const activePos = state?.positions?.find((p) => p.symbol === state.symbol)
   const hasOpenPos = (activePos?.qty ?? 0) > 0.000001
   const usd = (n: number) => '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -248,6 +262,15 @@ export default function App() {
             {state?.regime ? state.regime.toUpperCase() : 'CALIBRATING'}
           </div>
 
+          {/* Live telemetry: regime + ATR, from real state (Phase 3) */}
+          {state?.atr != null && (
+            <div className="telemetry-pill" title="Volatility (ATR) and market regime">
+              <span>σ <b>${state.atr.toFixed(0)}</b></span>
+              <span className="sep">·</span>
+              <span>SCORE <b>{(state.regime_score ?? 0).toFixed(2)}</b></span>
+            </div>
+          )}
+
           {/* AI Consensus Pill */}
           <div
             style={{
@@ -308,6 +331,7 @@ export default function App() {
             style={{ fontFamily: 'var(--mono)', fontSize: 11 }}
           >
             <span>⌘K</span>
+            <span className="cmd-label">Command</span>
           </button>
 
           <button
@@ -325,14 +349,16 @@ export default function App() {
             <span>Bridge</span>
           </button>
 
-          {/* Multi-Subsystem Health Status */}
+          {/* Multi-Subsystem Health Status — coherent: ONLINE vs OFFLINE, click to reconnect */}
           <div
-            className="status-badge"
-            title="System Pipeline: Market Feed ●, Quant Engine ●, AI Pipeline ●, Order Execution ●"
+            className={`status-badge ${online ? '' : 'off'}`}
+            title={online ? 'Engine connected · click to refresh' : 'Tunnel offline · click to reconnect'}
+            onClick={online ? undefined : reconnect}
+            style={{ cursor: online ? 'default' : 'pointer' }}
           >
             <span className={`status-dot ${online ? 'on' : 'off'}`} />
             <span style={{ fontSize: 10, color: 'var(--text-1)' }}>
-              {online ? 'ONLINE' : 'OFFLINE'}
+              {online ? 'ONLINE' : 'OFFLINE · RECONNECT'}
             </span>
           </div>
         </div>
@@ -365,7 +391,7 @@ export default function App() {
           <div className="ws-panel" style={{ maxWidth: 480, width: '100%', background: 'var(--surface-3)', boxShadow: '0 20px 60px rgba(0,0,0,0.7)' }}>
             <div className="card-header">
               <div className="card-title">Cloudflare Bridge Tunnel Configuration</div>
-              <button className="btn-icon" onClick={() => setShowBridgeModal(false)}>✕</button>
+              <button className="modal-close" onClick={() => setShowBridgeModal(false)}>✕</button>
             </div>
             <p style={{ fontSize: 12, color: 'var(--text-2)', marginBottom: 14, lineHeight: 1.5 }}>
               Paste the live URL printed by <code style={{ fontFamily: 'var(--mono)', color: 'var(--accent)' }}>python start.py</code> on your machine to sync real-time engine state:

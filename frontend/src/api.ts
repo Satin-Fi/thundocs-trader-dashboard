@@ -239,3 +239,8 @@ export const postTriggerTARun = () =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({}),
   })
+
+export const fetchMultiAgents = () => get<import('./types').MultiAgentData>('/api/multi-agents')
+
+export const fetchQuantHarnessBacktest = () => get<import('./types').QuantHarnessBacktest>('/api/quantharness/backtest')
+

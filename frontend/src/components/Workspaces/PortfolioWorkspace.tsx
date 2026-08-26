@@ -1,5 +1,6 @@
 import type { State, Analytics, Fill } from '../../types'
 import EquityChart from '../EquityChart'
+import MultiAgentGrid from '../MultiAgentGrid'
 
 interface Props {
   state: State | null
@@ -129,6 +130,9 @@ export default function PortfolioWorkspace({ state, analytics, eq, fills }: Prop
           </div>
         </div>
       </div>
+
+      {/* Multi-Agent Performance Grid */}
+      <MultiAgentGrid />
     </div>
   )
 }

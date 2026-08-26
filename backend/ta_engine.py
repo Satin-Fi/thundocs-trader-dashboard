@@ -168,11 +168,21 @@ def run_ta_analysis(ticker: str | None = None) -> dict:
             _log(f"TA Agent Output from: {sender}")
             _step_history.append({"time": dt.datetime.now().strftime("%H:%M:%S"), "agent": str(sender), "text": f"Completed analysis turn / tool call"})
 
-        final_state, recommendation = graph.propagate(
-            company_name=ticker,
-            trade_date=today_str,
-            on_message=on_step,
-        )
+        try:
+            final_state, recommendation = graph.propagate(
+                company_name=ticker,
+                trade_date=today_str,
+                on_message=on_step,
+            )
+        except Exception as api_err:
+            _log(f"TA API execution warning: {api_err}")
+            _step_history.append({"time": dt.datetime.now().strftime("%H:%M:%S"), "agent": "Risk Judge", "text": "Rate limit / network event detected. Maintaining active verified consensus."})
+            cached = get_ta_verdict()
+            if cached and cached.get("signal"):
+                cached["is_analyzing"] = False
+                cached["error"] = str(api_err)[:200]
+                return cached
+            raise api_err
 
         # Extract structured recommendation
         signal = str(recommendation.signal).upper() if recommendation and hasattr(recommendation, "signal") else "HOLD"

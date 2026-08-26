@@ -862,3 +862,62 @@ body {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
 }
+
+/* ── Redesign refinements (terminal-native, no mock data) ── */
+
+/* High-contrast, larger modal close (fixes low-contrast ✕ from screenshots) */
+.modal-close {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-size: 16px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.modal-close:hover {
+  color: #fff;
+  border-color: var(--negative);
+  background: var(--negative-soft);
+}
+
+/* Coherent offline state for the header health badge */
+.status-badge.off {
+  color: var(--negative);
+  background: var(--negative-soft);
+  border-color: var(--negative-border);
+  cursor: pointer;
+}
+.status-badge.off:hover { filter: brightness(1.15); }
+
+/* Labeled command-palette trigger (replaces cryptic "K") */
+.cmd-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+}
+
+/* Topbar telemetry: regime + ATR, sourced from live state (no mock) */
+.telemetry-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: var(--radius-sm);
+  letter-spacing: 0.04em;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
+.telemetry-pill b { color: var(--text-1); font-weight: 800; }
+.telemetry-pill .sep { color: var(--faint); }

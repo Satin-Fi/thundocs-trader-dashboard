@@ -2,14 +2,14 @@
   "signal": "HOLD",
   "rating": 3,
   "confidence": 0.65,
-  "reasoning": "The Multi-Agent Consensus Chamber evaluated current market structure for BTC-USD. Technical indicators show price consolidating in the $77,500\u2013$78,500 range with RSI at 48.2 (neutral). Social sentiment remains cautious amid macro ETF flows. The Bull and Bear researchers debated upside continuation vs. mean reversion risk. The Risk Arbiter recommends a HOLD stance with 0% risk expansion until a directional breakout above $81,500 occurs.",
+  "reasoning": "The Multi-Agent Consensus Chamber evaluated current market structure for BTC-USD. Technical indicators show price consolidating in the $77,500–$78,500 range with RSI at 48.2 (neutral). Social sentiment remains cautious amid macro ETF flows. The Bull and Bear researchers debated upside continuation vs. mean reversion risk. The Risk Arbiter recommends a HOLD stance with 0% risk expansion until a directional breakout above $81,500 occurs.",
   "agents": {
     "market_analyst": {
       "id": "market_analyst",
       "name": "Market Technical Analyst",
       "tag": "Technical Intel",
       "role": "Price Action & Momentum Specialist",
-      "icon": "\ud83d\udcc8",
+      "icon": "📈",
       "status": "active",
       "summary": "BTC-USD is testing the 50-period EMA on 15m/1h timeframes. 14-period ATR is approximately $840. RSI is balanced near 48.2. Key resistance sits at $81,500; key support at $76,400.",
       "indicators": [
@@ -24,7 +24,7 @@
       "name": "Social Sentiment Analyst",
       "tag": "Public Opinion",
       "role": "Social Pulse & Fear/Greed Specialist",
-      "icon": "\ud83d\udcac",
+      "icon": "💬",
       "status": "active",
       "summary": "Crypto Fear & Greed index is at 54 (Neutral). Social volume indicates retail hesitation following recent volatility, with long/short account ratio at 1.08.",
       "indicators": [
@@ -38,7 +38,7 @@
       "name": "Macro Catalyst Analyst",
       "tag": "Global Catalysts",
       "role": "Macro & Regulatory Catalyst Specialist",
-      "icon": "\ud83d\udcf0",
+      "icon": "📰",
       "status": "active",
       "summary": "Global macroeconomic environment is digesting upcoming interest rate decisions. Institutional Spot ETF inflows remain positive on net weekly basis (+$240M).",
       "indicators": [
@@ -51,7 +51,7 @@
       "name": "Bullish Researcher",
       "tag": "Long Thesis",
       "role": "Upside Catalyst & Breakout Advocate",
-      "icon": "\ud83d\udc02",
+      "icon": "🐂",
       "stance": "BULLISH",
       "thesis": "Sustained accumulation above $77,500 with higher lows establishes strong base for retest of $81,500 liquidity sweep. Net ETF inflows provide consistent baseline buy pressure."
     },
@@ -60,7 +60,7 @@
       "name": "Bearish Researcher",
       "tag": "Short Thesis",
       "role": "Downside Risk & Vulnerability Skeptic",
-      "icon": "\ud83d\udc3b",
+      "icon": "🐻",
       "stance": "BEARISH",
       "thesis": "Volume divergence at $80,000 resistance and open interest clustering create risk of liquidation cascade toward $76,000 support if $77,500 fails to hold."
     },
@@ -69,7 +69,7 @@
       "name": "Execution Trader",
       "tag": "Tactical Sizing",
       "role": "Order Routing & Tactical Tactician",
-      "icon": "\ud83d\udcbc",
+      "icon": "💼",
       "action": "HOLD",
       "size_fraction": 0.0,
       "strategy": "Breakout Confirmation & Volatility Guard"
@@ -79,7 +79,7 @@
       "name": "Risk Judge & PM",
       "tag": "Consensus Arbiter",
       "role": "Portfolio Manager & Supreme Gatekeeper",
-      "icon": "\u2696\ufe0f",
+      "icon": "⚖️",
       "decision": "HOLD",
       "confidence_pct": 65,
       "rating": 3,
@@ -109,34 +109,20 @@
   "is_analyzing": false,
   "recent_steps": [
     {
-      "time": "22:10:01",
-      "agent": "Market Analyst",
-      "text": "Completed technical indicators & ATR volatility pass ($840 ATR)"
+      "time": "00:11:16",
+      "agent": "Orchestrator",
+      "text": "Initializing Multi-Agent Pipeline for BTC-USD"
     },
     {
-      "time": "22:10:15",
-      "agent": "Sentiment Analyst",
-      "text": "Completed social fear/greed & polarity evaluation (54 Neutral)"
+      "time": "00:11:25",
+      "agent": "human",
+      "text": "Completed analysis turn / tool call"
     },
     {
-      "time": "22:10:30",
-      "agent": "News Analyst",
-      "text": "Scanned macroeconomic catalysts & ETF flow reports (+$240M)"
-    },
-    {
-      "time": "22:10:45",
-      "agent": "Bull Researcher",
-      "text": "Formulated long breakout thesis ($81,500 target)"
-    },
-    {
-      "time": "22:11:00",
-      "agent": "Bear Researcher",
-      "text": "Formulated downside liquidity sweep risks ($76,400 support)"
-    },
-    {
-      "time": "22:11:20",
-      "agent": "Risk Arbiter",
-      "text": "Deliberated consensus: HOLD stance (3/5 conviction)"
+      "time": "00:11:27",
+      "agent": "Risk Judge",
+      "text": "Rate limit / network event detected. Maintaining active verified consensus."
     }
-  ]
+  ],
+  "error": "Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day"
 }

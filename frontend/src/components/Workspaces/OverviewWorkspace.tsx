@@ -1,6 +1,7 @@
 import type { State, Signal, Risk, TAVerdict, Fill, Klines, Indicators } from '../../types'
 import PriceChart, { type IndicatorOpts } from '../PriceChart'
 import DecisionChain from '../DecisionChain'
+import MultiAgentGrid from '../MultiAgentGrid'
 
 interface Props {
   state: State | null
@@ -216,6 +217,9 @@ export default function OverviewWorkspace({
           )}
         </div>
       </div>
+      
+      {/* ── 5. AUTONOMOUS MULTI-AGENT EXECUTION GRID (20 PAIRS) ── */}
+      <MultiAgentGrid />
 
       <DecisionChain state={state} signal={signal} risk={risk} verdict={verdict} />
     </div>

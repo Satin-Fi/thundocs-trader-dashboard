@@ -223,3 +223,88 @@ export interface TAVerdict {
   recent_steps?: Array<{ time: string; agent: string; text: string }>
   error?: string
 }
+
+export interface AgentStat {
+  id: string
+  name: string
+  tag: string
+  icon: string
+  role: string
+  status: 'HUNTING' | 'IN_TRADE' | 'COOLDOWN'
+  win_rate: number
+  total_trades: number
+  pnl: number
+  active_pairs: string[]
+  max_concurrent: number
+}
+
+export interface AgentPosition {
+  symbol: string
+  agent_id: string
+  agent_name: string
+  icon: string
+  entry_price: number
+  qty: number
+  stop_loss: number
+  take_profit: number
+  atr: number
+  thesis: string
+  entry_time: string
+}
+
+export interface AgentActivity {
+  id: string
+  time: string
+  agent_id: string
+  agent_name: string
+  icon: string
+  symbol: string
+  action: 'ENTER_LONG' | 'TAKE_PROFIT' | 'STOP_LOSS' | 'SIGNAL_ALERT'
+  price: number
+  details: string
+}
+
+export interface MultiAgentData {
+  agents: AgentStat[]
+  active_positions: AgentPosition[]
+  activity_feed: AgentActivity[]
+  summary: {
+    total_agents: number
+    active_hunting: number
+    open_positions_count: number
+    combined_pnl: number
+    average_win_rate: number
+    total_trades_24h: number
+  }
+}
+
+export interface QuantHarnessBacktest {
+  initial_capital: number
+  final_equity: number
+  total_return_pct: number
+  benchmark_bnh_pct: number
+  alpha_pct: number
+  win_rate: number
+  total_trades: number
+  profit_factor: number
+  max_drawdown_pct: number
+  sharpe_ratio: number
+  equity_curve: { t: string | number; equity: number }[]
+  trades: Array<{
+    entry_time: string | number
+    exit_time: string | number
+    side: string
+    entry_price: number
+    exit_price: number
+    qty: number
+    pnl: number
+    pnl_pct: number
+    reason: string
+  }>
+  agents_participating: Array<{
+    name: string
+    weight: string
+    role: string
+  }>
+}
+
