@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://paper-trader.trycloudflare.com/api/:path*"
+      "destination": "https://3fbcbc3c-b8b3-454a-8f45-9042e2868af2.cfargotunnel.com/api/:path*"
     }
   ]
 }
