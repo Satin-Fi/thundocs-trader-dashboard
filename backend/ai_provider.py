@@ -197,9 +197,11 @@ def ai_verdict(signal, ctx):
     )
 
     # Try cloud providers (free tiers) in order of reliability.
+    # OpenRouter ("omni router") spans many free models and is the primary;
+    # Groq + HuggingFace are fast fallbacks; local heuristic is the safety net.
     for getter, (provider, model) in (
-        (_groq, ("groq", os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b"))),
         (_openrouter, ("openrouter", os.getenv("AI_MODEL", "auto"))),
+        (_groq, ("groq", os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b"))),
         (_huggingface, ("huggingface", "meta-llama/Llama-3.2-3B-Instruct")),
     ):
         try:
